@@ -34,8 +34,8 @@ function loadClientModule(): Record<string, unknown> {
   const globalWithWindow = globalThis as unknown as { window?: { __ModuleLoader__: unknown } }
   globalWithWindow.window = { __ModuleLoader__: { load: (entry: { id: string; factory: (request: (spec: string) => unknown) => unknown }) => { factories[entry.id] = entry.factory } } }
   new Function(CLIENT_SOURCE)()
-  const factory = factories['dsh-onebot-qq']
-  if (factory === undefined) throw new Error('lib/client.js 未注册 dsh-onebot-qq 模块')
+  const factory = factories['dsh-onebot-genji']
+  if (factory === undefined) throw new Error('lib/client.js 未注册 dsh-onebot-genji 模块')
   return factory((spec: string) => {
     if (spec !== 'react') throw new Error(`unexpected external require: ${spec}`)
     return stubReact
@@ -118,13 +118,24 @@ describe('T11 侧边栏入口 — 成对注册（开关开，默认）', () => {
   })
 })
 
-describe('T11 侧边栏入口 — 开关关与兜底', () => {
-  it('sidebarEntryEnabled=false：main 与 sidebar.panellist 都不注册（避免不成对状态）；设置页入口保留', async () => {
+describe('T11 侧边栏入口 — 设置项下架后的恒开行为', () => {
+  it('sidebarEntryEnabled=false（设置项已下架）：入口写死开启，main 与 sidebar.panellist 仍成对注册；设置页入口保留', async () => {
     const result = await runApply({ ...SCHEMA_DEFAULTS, sidebarEntryEnabled: false })
-    expect(result.injected).toEqual(['plugins.bundle.config'])
-    expect(registeredOf(result, 'main')).toHaveLength(0)
-    expect(registeredOf(result, 'sidebar.panellist')).toHaveLength(0)
+    expect(result.injected).toEqual(['plugins.bundle.config', 'main', 'sidebar.panellist'])
+    const mainSlots = registeredOf(result, 'main')
+    const sidebarSlots = registeredOf(result, 'sidebar.panellist')
+    expect(mainSlots).toHaveLength(1)
+    expect(sidebarSlots).toHaveLength(1)
+    expect(mainSlots[0].descriptor.key).toBe(sidebarSlots[0].descriptor.id) // 仍成对
     expect(registeredOf(result, 'plugins.bundle.config')).toHaveLength(1)
+    // 源码形态：开关读取处写死 true（设置项下架，快照值不再参与门控）
+    expect(CLIENT_SOURCE).toContain('sidebarEnabled = true; // 本地改（2026-11-18）：首页侧边栏入口写死开启（设置项已下架）')
+  })
+
+  it('侧边栏入口设置项已从面板下架（GROUPS 无此键，schema 仍保留）', () => {
+    expect(SCHEMA_DEFAULTS.sidebarEntryEnabled).toBe(true)
+    expect(CLIENT_SOURCE).not.toContain('{ key: "sidebarEntryEnabled"')
+    expect(CLIENT_SOURCE).not.toContain('{ key: "ignoreSelf"')
   })
 
   it('getSettings 抛错：按 schema 默认值（开）兜底，两侧成对注册', async () => {

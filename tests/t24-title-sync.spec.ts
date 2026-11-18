@@ -117,10 +117,10 @@ describe('T24/T27 resolveSessionTitle：注入缺失真实形态的容错读取'
 })
 
 describe('T24 设置键：titleSyncEnabled', () => {
-  it('schema 默认关，与 SCHEMA_DEFAULTS 一致', () => {
+  it('schema 默认开（.default(true)），与 SCHEMA_DEFAULTS / client DEFAULTS 一致', () => {
     const resolved = Config({}) as Record<string, unknown>
-    expect(SCHEMA_DEFAULTS.titleSyncEnabled).toBe(false)
-    expect(resolved.titleSyncEnabled).toBe(false)
+    expect(SCHEMA_DEFAULTS.titleSyncEnabled).toBe(true)
+    expect(resolved.titleSyncEnabled).toBe(true)
   })
 
   it('validatePatch：布尔通道可写，类型不符拒绝', () => {

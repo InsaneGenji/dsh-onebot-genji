@@ -6,12 +6,16 @@
  *   ① 语法可解析（new Function）+ CJS banner/footer 形态 + externals = react 与
  *      宿主 UI 原语 seed 模块（@deepseek-ai/dsh-client-ui-primitives，缺失回落 shim）；
  *   ② 入口导出 inject + apply；T11 侧边栏入口成对注册（main + sidebar.panellist 同 id）；
- *   ③ 七组 78 键：分组/键序/默认值与宿主侧 src/settings-remote.ts 导出常量逐字
+ *   ③ 六组 62 键：分组/键序/默认值与宿主侧 src/settings-remote.ts 导出常量逐字
  *      一致（descriptor 契约核对，防两侧漂移）；notices 为 5 真键（无贡献者 newSession）；
+ *      2026-11-18 面板下架键（ignoreSelf/agentPreset/forceSessionId/allowAllUsers/
+ *      replyCountsAsMention/reactionOnMention/reactionEmoji/faceStyle/
+ *      restrictedMemberPrefix/sidebarEntryEnabled）与「旁观」整组只退面板，
+ *      schema/ALL_KEYS/DEFAULTS 全保留；
  *   ④ Typert descriptor 与宿主服务方法面逐字对齐：getSettings() /
  *      updateSettings(patch, expectedRevision) / listWorkspaces()，全 positional，
- *      patch/config codec 覆盖全部 80 键（防客户端网关按 schema 剥键丢编辑）；
- *   ⑤ 渲染函数模块级可测：renderGroup 纯函数产出 78 键控件行，控件经 opts.ui 依赖
+ *      patch/config codec 覆盖全部在用键（防客户端网关按 schema 剥键丢编辑）；
+ *   ⑤ 渲染函数模块级可测：renderGroup 纯函数产出 62 键控件行，控件经 opts.ui 依赖
  *      注入（测试用桩，宿主 primitives / 回落 shim 同契约）；showIf 条件显隐；
  *      accessToken 密码型输入且不明文回显；布尔行 Switch 左右布局；
  *      notices 行为组按 newMessagePolicy 档位显隐；
@@ -93,8 +97,8 @@ function loadClientModule(): Record<string, unknown> {
   globalWithWindow.window = { __ModuleLoader__: { load: (entry: { id: string; factory: (request: (spec: string) => unknown) => unknown }) => { factories[entry.id] = entry.factory } } }
   // 求值 bundle 源码：new Function 体在调用时经全局 window 找到 ModuleLoader 桩完成注册。
   new Function(CLIENT_SOURCE)()
-  const factory = factories['dsh-onebot-qq']
-  if (factory === undefined) throw new Error('lib/client.js 未注册 dsh-onebot-qq 模块')
+  const factory = factories['dsh-onebot-genji']
+  if (factory === undefined) throw new Error('lib/client.js 未注册 dsh-onebot-genji 模块')
   return factory((spec: string) => {
     if (spec === 'react') return stubReact
     // 宿主原语 seed 模块在测试环境缺席：bundle 侧 try/catch 回落 shim（同旧宿主路径）
@@ -135,7 +139,7 @@ describe('T8 客户端 bundle — 装载契约（CJS 包裹 / externals / 入口
 
   it('CJS 包裹形态：banner window.__ModuleLoader__.load({id, factory:(require)=>{ + footer return module.exports', () => {
     expect(CLIENT_SOURCE).toContain('window.__ModuleLoader__.load({')
-    expect(CLIENT_SOURCE).toContain('id: "dsh-onebot-qq",')
+    expect(CLIENT_SOURCE).toContain('id: "dsh-onebot-genji",')
     expect(CLIENT_SOURCE).toContain('factory: (require) => {')
     // tsc 重排印后 footer 缩进为空格（源 src/client.ts 为 tab）。
     expect(CLIENT_SOURCE.trimEnd().endsWith('return module.exports;\n    }\n});')).toBe(true)
@@ -175,12 +179,12 @@ describe('T8 客户端 bundle — 装载契约（CJS 包裹 / externals / 入口
 
 describe('T8 客户端 bundle — descriptor 契约核对（与宿主 src/settings-remote.ts 逐字对齐）', () => {
   it('namespace/service = onebotSettings，与宿主 NAMESPACE 常量一致', () => {
-    expect(client.ONEBOT_SETTINGS_REMOTE).toEqual({ package: 'dsh-onebot-qq', descriptors })
+    expect(client.ONEBOT_SETTINGS_REMOTE).toEqual({ package: 'dsh-onebot-genji', descriptors })
     for (const descriptor of descriptors) {
       expect(descriptor.namespace).toBe(NAMESPACE)
       expect(descriptor.service).toBe(NAMESPACE)
       expect(descriptor.method).toBeTypeOf('string')
-      expect(descriptor.id).toBe(`dsh-onebot-qq#${NAMESPACE}/${String(descriptor.method)}`)
+      expect(descriptor.id).toBe(`dsh-onebot-genji#${NAMESPACE}/${String(descriptor.method)}`)
     }
   })
 
@@ -200,7 +204,7 @@ describe('T8 客户端 bundle — descriptor 契约核对（与宿主 src/settin
     expect(listWorkspaces.result.schema.parse({ available: false, workspaces: [] })).toEqual({ available: false, workspaces: [] })
   })
 
-  it('result codec 可解析宿主形态快照（80 键 config 含 notices/chatIdleEvictDays + secrets 脱敏标记 + groups + effect=restart）', () => {
+  it('result codec 可解析宿主形态快照（78 键 config 含 notices/chatIdleEvictDays + secrets 脱敏标记 + groups + effect=restart）', () => {
     const getSettings = descriptors[0] as { result: { schema: { parse(value: unknown): unknown } } }
     const snapshot = {
       revision: 3,
@@ -216,9 +220,13 @@ describe('T8 客户端 bundle — descriptor 契约核对（与宿主 src/settin
     expect(parsed.config.gifFramesEnabled).toBe(false)
     expect(parsed.config.inboxQueueEnabled).toBe(false)
     expect(parsed.config.inboxQueueDelayMs).toBe(600)
-    expect(parsed.config.titleSyncEnabled).toBe(false) // T24
-    expect(parsed.config.reactionOnMention).toBe(false) // T1 reaction：新键不被客户端 codec 剥掉
-    expect(parsed.config.reactionEmoji).toBe(178)
+    expect(parsed.config.titleSyncEnabled).toBe(true) // T24：schema/DEFAULTS 默认开
+    // 2026-11-18 面板下架键（reactionOnMention/reactionEmoji 等）已同时退出客户端 codec：
+    // vObject 声明外字段剥离，故宿主快照里仍带的这些键不会进客户端 config。
+    expect(parsed.config).not.toHaveProperty('reactionOnMention')
+    expect(parsed.config).not.toHaveProperty('reactionEmoji')
+    expect(parsed.config.allowAllUsers).toBe(false) // 面板下架但 schema/codec 仍保留（老配置可读）
+    expect(Object.keys(parsed.config)).toHaveLength(78) // 77 DEFAULTS 键 + notices
     expect(parsed.config.notices).toEqual(SCHEMA_DEFAULTS.notices)
   })
 
@@ -230,7 +238,7 @@ describe('T8 客户端 bundle — descriptor 契约核对（与宿主 src/settin
     expect(() => getSettings.result.schema.parse({ revision: 0, entryActive: true, config: SNAPSHOT_CONFIG, secrets: [], groups: SETTINGS_GROUPS, effect: 'none' })).toThrow()
   })
 
-  it('updateSettings patch codec 接受全 80 键任意子集（含 T6/T7 转正键与 notices）、拒绝非法值', () => {
+  it('updateSettings patch codec 接受全部键任意子集（含 T6/T7 转正键与 notices）、拒绝非法值', () => {
     const updateSettings = descriptors[1] as { parameters: Array<{ codec: { schema: { parse(value: unknown): unknown } } }> }
     const patchCodec = updateSettings.parameters[0].codec.schema
     expect(patchCodec.parse({ port: 1234, mode: 'reverse' })).toEqual({ port: 1234, mode: 'reverse' })
@@ -245,10 +253,11 @@ describe('T8 客户端 bundle — descriptor 契约核对（与宿主 src/settin
     // #61 建议 2：启动恢复会话开关进 patch codec（防网关剥键丢编辑）。
     expect(patchCodec.parse({ startupResumeEnabled: false })).toEqual({ startupResumeEnabled: false })
     expect(() => patchCodec.parse({ startupResumeEnabled: 'yes' })).toThrow()
-    // T1 reaction：开关+表情 ID 进 patch codec（防网关剥键丢编辑）。
-    expect(patchCodec.parse({ reactionOnMention: true, reactionEmoji: 128 })).toEqual({ reactionOnMention: true, reactionEmoji: 128 })
-    expect(() => patchCodec.parse({ reactionOnMention: 'yes' })).toThrow()
-    expect(() => patchCodec.parse({ reactionEmoji: '178' })).toThrow()
+    // 2026-11-18 下架键已退出 patch codec（声明外字段剥离 → 不会出现在下发 patch 里，
+    // 但也不会因类型不符抛错：客户端根本不把这两键放进 patch 结构）。
+    expect(patchCodec.parse({ reactionOnMention: true, reactionEmoji: 128 })).toEqual({})
+    expect(patchCodec.parse({ reactionOnMention: 'yes' })).toEqual({})
+    expect(patchCodec.parse({ reactionEmoji: '178' })).toEqual({})
     expect(patchCodec.parse({ forceSessionId: 'abc123' })).toEqual({ forceSessionId: 'abc123' })
     expect(patchCodec.parse({ notices: { queue: '自定义', answerAccepted: false } })).toEqual({ notices: { queue: '自定义', answerAccepted: false } })
     expect(() => patchCodec.parse({ mode: 'invalid' })).toThrow()
@@ -257,53 +266,117 @@ describe('T8 客户端 bundle — descriptor 契约核对（与宿主 src/settin
   })
 })
 
-describe('T8 客户端 bundle — 七组 78 键（与 host SETTINGS_GROUPS 逐字一致，T8 恢复全等契约）', () => {
-  it('分组键序逐字对齐 host SETTINGS_GROUPS（7 组 78 键，含 T6/T7 转正键、T11 sidebarEntryEnabled、T24 titleSyncEnabled 与 #61 建议 2 startupResumeEnabled）', () => {
-    expect(client.GROUP_KEYS).toStrictEqual(SETTINGS_GROUPS)
-    expect(groups.map((group) => group.id)).toEqual(['connection', 'permissions', 'behavior', 'bystander', 'session', 'media', 'diagnostics'])
-    expect(allFields).toHaveLength(78)
+describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已移出，host SETTINGS_GROUPS 同步收窄、schema 键保留）', () => {
+  /** 2026-11-18 面板口径：62 键 × 6 组，逐字对齐 src/client.ts GROUPS。 */
+  const PANEL_GROUPS: Record<string, string[]> = {
+    connection: ['mode', 'host', 'port', 'url', 'accessToken', 'botQQ'],
+    permissions: [
+      'requireMention', 'memberTools', 'adminUsers', 'dmPolicy', 'groupPolicy', 'allowFrom',
+      'groupAllowFrom', 'wakeNamesAdmin', 'wakeNamesMember', 'atAllCountsAsMention', 'pokeEnabled', 'sensitivePatterns',
+    ],
+    behavior: [
+      'rateLimitPerMinute', 'unknownCommand', 'newMessagePolicy', 'autoSteerPolicy', 'inboxQueueEnabled',
+      'inboxQueueDelayMs', 'interimMessages', 'interimRecall', 'interimRecallMs', 'sendErrorNotice', 'deferredTimeoutMs',
+    ],
+    session: [
+      'titleSyncEnabled', 'startupResumeEnabled', 'newSessionGreeting', 'memoryFilesEnabled', 'memoryFiles',
+      'workspacePath', 'dmPromptFile', 'groupWorkspacePath', 'groupPromptFile',
+    ],
+    media: [
+      'sttEnabled', 'sttEngine', 'sttCommand', 'sttArgs', 'sttModel', 'textImageEnabled', 'textImageThreshold',
+      'cardFooter', 'fontFiles', 'fontFamilies', 'outboundImageMaxBytes', 'maxVoiceBytes', 'maxFileBytes',
+      'inboundImageMaxPx', 'inboundFileMaxBytes', 'gifFramesEnabled', 'allowPrivateHosts',
+    ],
+    diagnostics: ['actionAuditEnabled', 'traceEnabled', 'recordInbound', 'inboxRedact', 'injectEnabled', 'injectDryRun', 'logLevel'],
+  }
+
+  it('分组键序逐字对齐面板口径（6 组 62 键，含 T6/T7 转正键、T24 titleSyncEnabled 与 #61 建议 2 startupResumeEnabled）', () => {
+    expect(client.GROUP_KEYS).toStrictEqual(PANEL_GROUPS)
+    expect(groups.map((group) => group.id)).toEqual(['connection', 'permissions', 'behavior', 'session', 'media', 'diagnostics'])
+    expect(allFields).toHaveLength(62)
     const clientKeys = allFields.map((field) => field.key)
-    expect(new Set(clientKeys).size).toBe(78) // 无重复
+    expect(new Set(clientKeys).size).toBe(62) // 无重复
     for (const key of clientKeys) expect([...ALL_KEYS]).toContain(key) // 无孤儿键
+    // 面板键 ⊂ host SETTINGS_GROUPS（host 侧仍保留下架键，面板只是不再渲染）
+    const hostKeys = Object.values(SETTINGS_GROUPS).flat()
+    for (const key of clientKeys) expect(hostKeys).toContain(key)
     // T6/T7 新增键落位
     expect(groups.find((group) => group.id === 'media')!.fields.map((field) => field.key)).toContain('gifFramesEnabled')
     expect(groups.find((group) => group.id === 'behavior')!.fields.map((field) => field.key)).toEqual(
       expect.arrayContaining(['inboxQueueEnabled', 'inboxQueueDelayMs']),
     )
-    // T24：标题同步开关落位 behavior 组
-    expect(groups.find((group) => group.id === 'behavior')!.fields.map((field) => field.key)).toContain('titleSyncEnabled')
-    // 0.10.0 重排（方案 A）：侧边栏入口/忽略自己落 behavior，工作区/强制会话/提示词文件落 session，内网放行落 media
-    expect(groups.find((group) => group.id === 'behavior')!.fields.map((field) => field.key)).toEqual(
-      expect.arrayContaining(['ignoreSelf', 'sidebarEntryEnabled']),
-    )
-    expect(groups.find((group) => group.id === 'session')!.fields.map((field) => field.key)).toEqual(
-      expect.arrayContaining(['workspacePath', 'groupWorkspacePath', 'forceSessionId', 'dmPromptFile', 'groupPromptFile']),
-    )
-    // #61 建议 2：启动恢复会话开关落位 session 组（组尾）
-    expect(groups.find((group) => group.id === 'session')!.fields.map((field) => field.key)).toContain('startupResumeEnabled')
+    // T24：titleSyncEnabled 上会话组首位（firstMessageAsUser 已从面板换成它）
+    expect(groups.find((group) => group.id === 'session')!.fields.map((field) => field.key)).toEqual([
+      'titleSyncEnabled', 'startupResumeEnabled', 'newSessionGreeting', 'memoryFilesEnabled', 'memoryFiles',
+      'workspacePath', 'dmPromptFile', 'groupWorkspacePath', 'groupPromptFile',
+    ])
+    // #61 建议 2：启动恢复会话开关落位 session 组第二位
+    expect(groups.find((group) => group.id === 'session')!.fields.map((field) => field.key)[1]).toBe('startupResumeEnabled')
     expect(groups.find((group) => group.id === 'media')!.fields.map((field) => field.key)).toContain('allowPrivateHosts')
     expect(groups.find((group) => group.id === 'connection')!.fields.map((field) => field.key)).toEqual([
       'mode', 'host', 'port', 'url', 'accessToken', 'botQQ',
     ])
   })
 
-  it('默认值逐字对齐 host SCHEMA_DEFAULTS（T8 恢复全等，无豁免；notices 走面板 5 真键不在 DEFAULTS）', () => {
+  it('面板下架键不再渲染，但 schema/ALL_KEYS/DEFAULTS 仍保留（老配置照样能读）', () => {
+    const clientKeys = allFields.map((field) => field.key)
+    const retiredFromPanel = [
+      'ignoreSelf', 'agentPreset', 'forceSessionId', 'allowAllUsers', 'replyCountsAsMention',
+      'reactionOnMention', 'reactionEmoji', 'faceStyle', 'restrictedMemberPrefix', 'sidebarEntryEnabled',
+      'firstMessageAsUser',
+    ]
+    for (const key of retiredFromPanel) expect(clientKeys).not.toContain(key)
+    // 其中大多数仍留在 host 键表里（首条消息身份与 allowAllUsers 两侧都已不在组表）
+    const hostKeys = Object.values(SETTINGS_GROUPS).flat()
+    for (const key of [
+      'ignoreSelf', 'agentPreset', 'forceSessionId', 'replyCountsAsMention', 'reactionOnMention',
+      'reactionEmoji', 'faceStyle', 'restrictedMemberPrefix', 'sidebarEntryEnabled',
+    ]) {
+      expect(hostKeys).toContain(key)
+    }
+    // DEFAULTS 里保留了下架键的默认值（值仍可参与 patch 与徽标对照）；
+    // reactionOnMention/reactionEmoji 连 DEFAULTS 都未留（面板与默认表同步下架）。
+    for (const key of ['ignoreSelf', 'agentPreset', 'forceSessionId', 'allowAllUsers', 'replyCountsAsMention', 'faceStyle', 'restrictedMemberPrefix', 'sidebarEntryEnabled', 'firstMessageAsUser']) {
+      expect(key in defaults).toBe(true)
+    }
+    expect('reactionOnMention' in defaults).toBe(false)
+    expect('reactionEmoji' in defaults).toBe(false)
+  })
+
+  it('「旁观」整组退出面板，但 schema/ALL_KEYS/DEFAULTS 的 5 键全保留（老配置还能读）', () => {
+    expect(groups.map((group) => group.id)).not.toContain('bystander')
+    expect(allFields.map((field) => field.key)).not.toContain('bystanderEnabled')
+    const bystanderKeys = ['bystanderEnabled', 'bystanderCapacity', 'bystanderCooldownMinutes', 'bystanderDailyLimit', 'bystanderTopics']
+    for (const key of bystanderKeys) {
+      expect([...ALL_KEYS]).toContain(key)
+      expect(key in defaults).toBe(true)
+    }
+    expect(defaults.bystanderEnabled).toBe(false)
+    expect(defaults.bystanderCapacity).toBe(50)
+    expect(defaults.bystanderCooldownMinutes).toBe(45)
+    expect(defaults.bystanderDailyLimit).toBe(20)
+    expect(defaults.bystanderTopics).toEqual([])
+  })
+
+  it('默认值逐字对齐 host SCHEMA_DEFAULTS（77 键：62 面板键 + 下架键 + 旁观 5 键 + chatIdleEvictDays；notices 走面板 5 真键不在 DEFAULTS）', () => {
     const hostDefaults = SCHEMA_DEFAULTS as Record<string, unknown>
-    expect(Object.keys(defaults)).toHaveLength(79) // 78 面板键 + chatIdleEvictDays
+    expect(Object.keys(defaults)).toHaveLength(77) // 含下架键、旁观 5 键与 chatIdleEvictDays
     expect('notices' in defaults).toBe(false) // notices 由 NOTICE_KEYS 面板通道承载
     expect(defaults.chatIdleEvictDays).toBe(hostDefaults.chatIdleEvictDays) // 不上面板但参与徽标对照
-    expect(defaults.sidebarEntryEnabled).toBe(true) // T11：侧边栏入口默认开（用户裁定）
-    expect(defaults.titleSyncEnabled).toBe(false) // T24：标题同步默认关（用户裁定）
+    expect(defaults.sidebarEntryEnabled).toBe(true) // T11：侧边栏入口默认开（设置项已下架，行为恒开）
+    expect(defaults.titleSyncEnabled).toBe(true) // T24：标题同步默认开（schema .default(true)）
     expect(defaults.startupResumeEnabled).toBe(true) // #61 建议 2：启动恢复会话默认开（行为零变化）
-    expect(defaults.reactionOnMention).toBe(false) // T1 reaction：默认关
-    expect(defaults.reactionEmoji).toBe(178) // T1 reaction：默认微笑
+    expect(defaults.reactionOnMention).toBe(undefined) // 面板与默认表同步下架（schema 侧仍有）
+    expect(defaults.reactionEmoji).toBe(undefined)
     for (const [key, value] of Object.entries(defaults)) {
       expect(key in hostDefaults).toBe(true) // 无孤儿键
       expect(value).toEqual(hostDefaults[key])
     }
+    // 面板上的每个键都必须有默认值（否则徽标/重置会缺底）
+    for (const field of allFields) expect(field.key in defaults).toBe(true)
   })
 
-  it('字段类型与 host 默认值形态一致；枚举字段选项覆盖默认值（10 枚举与宿主 ENUM_KEYS 同宽，#59 memberTools 入列）', () => {
+  it('字段类型与 host 默认值形态一致；枚举字段选项覆盖默认值（9 枚举，#59 memberTools 入列）', () => {
     for (const field of allFields) {
       const fallback = SCHEMA_DEFAULTS[field.key]
       if (field.type === 'boolean') expect(typeof fallback).toBe('boolean')
@@ -313,19 +386,21 @@ describe('T8 客户端 bundle — 七组 78 键（与 host SETTINGS_GROUPS 逐�
       else expect(field.type === 'string' || field.type === 'secret').toBe(true)
     }
     const enumField = (key: string) => groups.flatMap((group) => group.fields).find((field) => field.key === key)
+    expect(allFields.filter((field) => field.type === 'enum')).toHaveLength(9)
     expect(enumField('mode')?.options).toEqual(['reverse', 'forward'])
     expect(enumField('dmPolicy')?.options).toEqual(['open', 'allowlist', 'disabled'])
     expect(enumField('groupPolicy')?.options).toEqual(['open', 'allowlist', 'disabled'])
     expect(enumField('unknownCommand')?.options).toEqual(['intercept', 'passthrough'])
     expect(enumField('newMessagePolicy')?.options).toEqual(['queue', 'steer'])
     expect(enumField('autoSteerPolicy')?.options).toEqual(['admin', 'all'])
-    expect(enumField('faceStyle')?.options).toEqual(['name', 'emoji'])
+    expect(enumField('memberTools')?.options).toEqual(['none', 'send', 'all'])
     expect(enumField('logLevel')?.options).toEqual(['debug', 'info', 'warn', 'error'])
     expect(enumField('sttEngine')?.options).toEqual(['auto', 'openai', 'whisper-cpp', 'custom'])
+    expect(enumField('faceStyle')).toBeUndefined() // 面板下架
   })
 
   it('分组标题与字段 label 为中文（T8 要求：贡献者口语短文案 × 中文）', () => {
-    expect(groups.map((group) => group.title)).toEqual(['连接', '权限', '行为', '旁观', '会话', '媒体', '诊断'])
+    expect(groups.map((group) => group.title)).toEqual(['连接', '权限', '行为', '会话', '媒体', '诊断'])
     for (const field of allFields) expect(field.label).toMatch(/\p{Script=Han}/u)
   })
 
@@ -341,29 +416,33 @@ describe('T8 notices 面板 — 5 真键（本仓 schema 无贡献者 newSession
     expect(draftKeys).toEqual([...NOTICE_KEYS])
   })
 
-  it('默认（policy=steer）：behavior 组显 插话/回答/超时补发/限流 4 条通知，不显排队提示；session 组无通知行', () => {
+  it('behavior 组恒显全部 5 条通知（含排队提示，不再随档位隐藏）；session 组无通知行', () => {
     const behavior = flat(renderGroup('behavior', { onNoticeChange: () => {} }))
     expect(behavior).toContain('插话提示')
+    expect(behavior).toContain('排队提示')
     expect(behavior).toContain('回答回执')
     expect(behavior).toContain('超时补发提示')
     expect(behavior).toContain('限流提示')
-    expect(behavior).not.toContain('排队提示')
     expect(flat(renderGroup('session', {}))).not.toContain('提示文案') // 无通知文案行（0.10.0 起提示词文件在 session 组，裸「提示」会被 label 误伤）
   })
 
-  it('policy=queue 档位切换：显排队提示、隐插话提示（贡献者三元组面板语义保留到真键）', () => {
+  it('newMessagePolicy 档位不再影响通知行：queue 档同样 5 条恒显，只隐自动插话资格', () => {
     const section = renderGroup('behavior', { draft: { ...baseDraft(), newMessagePolicy: 'queue' }, onNoticeChange: () => {} })
     const rendered = flat(section)
     expect(rendered).toContain('排队提示')
-    expect(rendered).not.toContain('插话提示')
+    expect(rendered).toContain('插话提示')
+    expect(rendered).not.toContain('自动插话资格')
   })
 
   it('通知行 = Switch 桩开关 + 开启时文案 textarea（aria-label=「XX提示文案」）', () => {
     const elements = walk(renderGroup('behavior', { onNoticeChange: () => {} }))
-    const switches = elements.filter((element) => element.type === stubUi.Switch && String(element.props.label ?? '').includes('提示'))
-    expect(switches.length).toBeGreaterThanOrEqual(3)
+    const noticeLabels = ['插话提示', '排队提示', '回答回执', '超时补发提示', '限流提示']
+    const switches = elements.filter(
+      (element) => element.type === stubUi.Switch && noticeLabels.includes(String(element.props.label ?? '')),
+    )
+    expect(switches).toHaveLength(5) // 5 条通知恒显、各自可关
     const textareas = elements.filter((element) => element.type === 'textarea' && String(element.props['aria-label'] ?? '').endsWith('文案'))
-    expect(textareas).toHaveLength(4)
+    expect(textareas.map((element) => element.props['aria-label'])).toEqual(noticeLabels.map((label) => `${label}文案`))
   })
 
   it('computePatch notices 增量：自定义文案下发 string、恢复默认文案下发 true、关闭下发 false', () => {
@@ -442,27 +521,49 @@ describe('T8 showIf 条件显隐 — 贡献者面板交互契约', () => {
     expect(visibleLabels('session', { memoryFilesEnabled: true })).toContain('记忆文件路径')
   })
 
-  it('渲染行计数与 showIf 自洽：默认草稿顶层字段行 66 行 = 全键 78 - 12 个隐藏键（原 8 个 + #58 旁观 4 个 showIf）（host/port/interimRecallMs/inboxQueueDelayMs/memoryFiles/sttCommand/sttArgs/sttModel）；0.10.0 重排后 connection 4（6-2 隐藏）/ behavior 20（12 字段 + 4 通知开关 + 4 文案）/ session 10（11-1 隐藏）/ media 14（17-3 隐藏）', () => {
+  it('渲染行计数与 showIf 自洽：默认草稿顶层字段行 61 行 = 可见 51 键 + 10 通知行（5 开关 + 5 文案）；隐藏 11 键', () => {
     const visible = (field: { showIf?: { key: string; value: unknown } }) => !field.showIf || baseDraft()[field.showIf.key] === field.showIf.value
-    const expectedVisible = allFields.filter(visible).length
-    expect(expectedVisible).toBe(66)
+    const hiddenKeys = allFields.filter((field) => !visible(field)).map((field) => field.key)
+    expect(allFields.filter(visible)).toHaveLength(51)
+    expect(hiddenKeys).toEqual([
+      'host', 'port', 'allowFrom', 'groupAllowFrom', 'inboxQueueDelayMs', 'interimRecallMs',
+      'memoryFiles', 'sttCommand', 'sttArgs', 'sttModel', 'textImageThreshold',
+    ])
     const rowsPerGroup = groups.map((group) => topFieldRows(renderGroup(group.id, {})).length)
-    expect(rowsPerGroup).toEqual([4, 18, 20, 1, 10, 14, 7]) // #59 memberTools 入 permissions 组；#58 旁观组 5 字段（4 个 showIf 隐藏）；T1 reaction permissions 组 +2；#61 建议 2 session 组 +1（startupResumeEnabled）
-    expect(rowsPerGroup.reduce((sum, count) => sum + count, 0)).toBe(74) // 66 可见字段行 + 8 通知行（behavior 内非字段行；showIf 隐藏键不渲染）
+    // connection 4（6-2 隐藏）/ permissions 10（12-2 隐藏）/ behavior 19（7 可见字段 + deferredTimeoutMs 挪进通知段 + 1 尾部发送错误通知 + 10 通知行）
+    // session 8（9-1 隐藏）/ media 13（17-4 隐藏）/ diagnostics 7（旁观组已整组下架，不再计行）
+    expect(rowsPerGroup).toEqual([4, 10, 19, 8, 13, 7])
+    expect(rowsPerGroup.reduce((sum, count) => sum + count, 0)).toBe(61)
+  })
+
+  it('2026-11-18 行位调整：deferredTimeoutMs 紧跟「超时补发提示」文案行；sendErrorNotice 落整组最后', () => {
+    const rows = topFieldRows(renderGroup('behavior', {}))
+    const labelOf = (row: StubElement) => walk(row).filter((element) => element.props.className === 'obx-label').map((element) => String(element.children[0])).join('|')
+    const labels = rows.map(labelOf)
+    expect(labels[labels.length - 1]).toBe('发送错误通知')
+    const timeoutNoticeRow = labels.indexOf('超时补发提示')
+    expect(timeoutNoticeRow).toBeGreaterThan(-1)
+    expect(labels[timeoutNoticeRow + 2]).toBe('等待模型回复超时（毫秒）') // 开关行 → 文案行 → 超时字段行
+    // 通知开关关掉时超时字段退回原字段序位置（在 sendErrorNotice 之前），不再寄生在通知段
+    const offDraft = baseDraft()
+    offDraft['notices.deferredTimeout'] = { on: false, text: '⏳ 等待模型回复超时（已静默等待约 X 秒），任务仍在后台运行；完成后将自动补发最终结果。如需停止请发送 /stop。' }
+    const offLabels = topFieldRows(renderGroup('behavior', { draft: offDraft })).map(labelOf)
+    expect(offLabels).toContain('等待模型回复超时（毫秒）')
+    expect(offLabels[offLabels.length - 1]).toBe('发送错误通知')
   })
 })
 
 describe('T8 客户端 bundle — 渲染函数模块级可测（renderGroup 纯函数，ui 桩注入）', () => {
-  it('六组各产出标题与逐字段控件行；控件类型齐备（10 分段 + 13 多行文本 + 33 开关 + 18 文本输入 + 1 密码框 + 1 清除勾选）', () => {
+  it('六组各产出标题与逐字段控件行；控件类型齐备（9 分段 + 6 多行文本 + 21 开关 + 5 通知开关 + 5 通知文案 + 14 文本输入 + 1 密码框 + 1 清除勾选）', () => {
     const sections = groups.map((group) => renderGroup(group.id, {}))
-    expect(sections.map((section) => section.props['data-group'])).toEqual(['connection', 'permissions', 'behavior', 'bystander', 'session', 'media', 'diagnostics'])
+    expect(sections.map((section) => section.props['data-group'])).toEqual(['connection', 'permissions', 'behavior', 'session', 'media', 'diagnostics'])
     const elements = sections.flatMap((section) => walk(section))
-    expect(elements.filter((element) => element.type === stubUi.SegmentedControl)).toHaveLength(10) // 10 枚举全显（原生分段控件）
-    expect(elements.filter((element) => element.type === 'textarea')).toHaveLength(12) // 8 可见 stringArray + 4 通知文案（#58 bystanderTopics 默认被 showIf 隐藏不渲染）
+    expect(elements.filter((element) => element.type === stubUi.SegmentedControl)).toHaveLength(9) // 9 枚举全显（原生分段控件；faceStyle 已下架）
+    expect(elements.filter((element) => element.type === 'textarea')).toHaveLength(11) // 6 可见 stringArray + 5 通知文案（allowFrom/memoryFiles/sttArgs 默认被 showIf 隐藏不渲染）
     const inputs = elements.filter((element) => element.type === stubUi.Input)
-    expect(inputs.filter((input) => input.props.type === 'text')).toHaveLength(18) // 9 可见 number（含 T1 reaction reactionEmoji）+ 9 可见 string
+    expect(inputs.filter((input) => input.props.type === 'text')).toHaveLength(14) // 7 可见 number + 7 可见 string（forward 档 url 显、host/port 隐）
     expect(inputs.filter((input) => input.props.type === 'password')).toHaveLength(1)
-    expect(elements.filter((element) => element.type === stubUi.Switch)).toHaveLength(33) // 29 布尔（含 T1 reaction reactionOnMention、#61 建议 2 startupResumeEnabled）+ 4 通知开关
+    expect(elements.filter((element) => element.type === stubUi.Switch)).toHaveLength(26) // 21 布尔面板键 + 5 通知开关（恒显）
     expect(elements.filter((element) => element.type === stubUi.Checkbox)).toHaveLength(1) // 仅 secret 清除勾选
     expect(elements.filter((element) => element.type === 'input')).toHaveLength(0) // 控件全走 ui 桩；原始 input 不再出现
   })
@@ -531,7 +632,9 @@ describe('T8 补回上游缺口① — W6「非默认」徽标（所有类型键
 
   it('T8 语义恢复：不限字段类型——string/number/stringArray/enum 键命中同样挂标（贡献者只给 boolean/enum 挂，上游 W6 全键）', () => {
     const draftValues = baseDraft()
-    const hits = ['botQQ', 'rateLimitPerMinute', 'allowFrom', 'faceStyle', 'traceEnabled'] // string/number/stringArray/enum/boolean
+    // string / number / stringArray / enum / boolean 各取一个**当前可见**的面板键
+    //（faceStyle 已下架、allowFrom 在默认 dmPolicy=open 下被 showIf 隐藏，均不产出行）
+    const hits = ['botQQ', 'rateLimitPerMinute', 'sensitivePatterns', 'logLevel', 'traceEnabled']
     const found = badges(draftValues, hits)
     expect(found).toHaveLength(5)
     for (const badge of found) expect(JSON.stringify(badge)).toContain('与默认值不同')
@@ -641,11 +744,11 @@ describe('T8 数字行内校验 — NUMBER_RANGE 对齐 host + numberRangeInvali
     raw: unknown,
   ) => string | null
 
-  it('NUMBER_RANGE 覆盖全部面板数字键（15 键，含 T7 inboxQueueDelayMs、#58 旁观三键与 T1 reaction reactionEmoji；chatIdleEvictDays 不上面板不入表）', () => {
+  it('NUMBER_RANGE 覆盖全部面板数字键（14 键，含 T7 inboxQueueDelayMs 与 #58 旁观三键；reactionEmoji/chatIdleEvictDays 不上面板不入表）', () => {
     expect(NUMBER_RANGE).toStrictEqual({
       port: [1, 65535],
-      interimRecallMs: [0, undefined],
       rateLimitPerMinute: [0, undefined],
+      interimRecallMs: [0, undefined],
       deferredTimeoutMs: [0, undefined],
       inboxQueueDelayMs: [0, undefined],
       textImageThreshold: [0, undefined],
@@ -657,26 +760,34 @@ describe('T8 数字行内校验 — NUMBER_RANGE 对齐 host + numberRangeInvali
       bystanderCapacity: [5, 500],
       bystanderCooldownMinutes: [5, 1440],
       bystanderDailyLimit: [1, 200],
-      reactionEmoji: [0, undefined],
     })
-    expect(Object.keys(NUMBER_RANGE)).toEqual(allFields.filter((field) => field.type === 'number').map((field) => field.key))
+    // 键集 = 面板 11 个 number 字段 + 「旁观」整组下架后仍留在表里的 3 个数字键
+    // （reactionEmoji/chatIdleEvictDays 不上面板也不入表）
+    const panelNumberKeys = allFields.filter((field) => field.type === 'number').map((field) => field.key)
+    expect(panelNumberKeys).toHaveLength(11)
+    expect([...Object.keys(NUMBER_RANGE)].sort()).toEqual(
+      [...panelNumberKeys, 'bystanderCapacity', 'bystanderCooldownMinutes', 'bystanderDailyLimit'].sort(),
+    )
     expect(CLIENT_SOURCE).toContain('src/settings-remote.ts')
   })
 
-  it('numberRangeInvalid：越界/NaN 判非法返回范围文案，边界含端点；非 number 不校验', () => {
+  it('numberRangeInvalid：越界/NaN 判非法返回范围文案（自带「 的整数」后缀），边界含端点；非 number 不校验', () => {
     const portField = allFields.find((field) => field.key === 'port')!
     const recallField = allFields.find((field) => field.key === 'interimRecallMs')!
-    expect(numberRangeInvalid(portField, '70000')).toBe('1–65535')
-    expect(numberRangeInvalid(portField, '0')).toBe('1–65535')
+    expect(numberRangeInvalid(portField, '70000')).toBe('1–65535 的整数')
+    expect(numberRangeInvalid(portField, '0')).toBe('1–65535 的整数')
     expect(numberRangeInvalid(portField, '3000')).toBeNull()
     expect(numberRangeInvalid(portField, '65535')).toBeNull()
-    expect(numberRangeInvalid(portField, 'abc')).toBe('1–65535')
-    expect(numberRangeInvalid(portField, '')).toBe('1–65535')
-    expect(numberRangeInvalid(recallField, '-1')).toBe('≥0')
+    expect(numberRangeInvalid(portField, 'abc')).toBe('1–65535 的整数')
+    expect(numberRangeInvalid(portField, '')).toBe('1–65535 的整数')
+    expect(numberRangeInvalid(recallField, '-1')).toBe('≥0 的整数')
     expect(numberRangeInvalid(recallField, '0')).toBeNull()
     expect(numberRangeInvalid(recallField, '1e9')).toBeNull()
     expect(numberRangeInvalid(null, 'x')).toBeNull()
     expect(numberRangeInvalid({ key: 'botQQ', type: 'string' }, 'x')).toBeNull()
+    // 文案模板只带 range 占位，后缀在 range 文案里（"field.numberInvalid": "必须是 {range}"）
+    expect(CLIENT_SOURCE).toContain('"field.numberInvalid": "必须是 {range}"')
+    expect(CLIENT_SOURCE).toContain('"field.numberInvalid": "Must be {range}"')
   })
 
   it('越界标红：number 控件 aria-invalid 透传 + hint 行内嵌红字；校验时机 = onChange 即时', () => {
@@ -725,7 +836,7 @@ describe('T8 冲突合并 — mergeOnConflict（远端未变保留草稿、远�
     expect(JSON.stringify(before)).toBe(beforeJson)
   })
 
-  it('部分冲突：远端已变的脏键跟随新快照并入 conflictKeys，其余保留；合并覆盖全部 78 面板键', () => {
+  it('部分冲突：远端已变的脏键跟随新快照并入 conflictKeys，其余保留；合并覆盖全部 62 面板键', () => {
     const before = baseDraft()
     before.port = '9999'
     before.botQQ = '10086'
@@ -735,7 +846,7 @@ describe('T8 冲突合并 — mergeOnConflict（远端未变保留草稿、远�
     expect(merged.keptCount).toBe(1)
     expect(merged.draft.port).toBe('3000')
     expect(merged.draft.botQQ).toBe('10086')
-    expect(Object.keys(merged.draft)).toHaveLength(78)
+    expect(Object.keys(merged.draft)).toHaveLength(62)
     expect((client.computeDirtyKeys as Function)(merged.draft, next)).toEqual(['botQQ'])
   })
 

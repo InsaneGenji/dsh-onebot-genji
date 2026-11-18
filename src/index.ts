@@ -502,7 +502,7 @@ export const Config: Z<Config> = z.object({
     .description('记忆文件路径列表（T4 PR 移植）：支持 ~/ 展开；仅在 memoryFilesEnabled 开启且私聊会话生效'),
   chatTailsEnabled: z.boolean().default(false)
     .description('上下文尾巴开关（T4 PR 移植）：开启后 /new 把上一会话最后几句（最多 8 条、每条 300 字符，落盘 mediaDir/chat-tails.json）带进新会话，模型开场先接上一段话头；默认关（/new 维持纯新会话）'),
-  titleSyncEnabled: z.boolean().default(false)
+  titleSyncEnabled: z.boolean().default(true)
     .description('会话标题同步（T24 PR 移植）：开启后每条 QQ 用户消息派发回合后触发宿主会话标题刷新（一次小 LLM 调用，等价宿主自动标题 all-prompts 的原行为——QQ 消息的来源标记不会触发宿主自动标题，本开关补上）；用户在宿主里手动钉住的标题永不覆盖；标题服务未部署或刷新失败时静默降级（仅告警日志）；默认关闭；改动需刷新页面/重启后生效'),
   inboundFileMaxBytes: z.number().default(INBOUND_FILE_MAX_BYTES)
     .description('QQ 入站文件最大字节数（直链/base64 拉取，0 = 不限制）'),
@@ -758,7 +758,7 @@ export function apply(ctx: Context, config: Config): void {
     },
     config: {
       botQQ: config.botQQ,
-      ignoreSelf: config.ignoreSelf,
+      ignoreSelf: true, // 本地改（2026-11-18）：忽略自己发的消息恒开（设置项已下架）
       requireMention: config.requireMention,
       reactionOnMention: config.reactionOnMention,
       reactionEmoji: config.reactionEmoji,

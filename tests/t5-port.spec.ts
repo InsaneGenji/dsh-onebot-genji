@@ -38,17 +38,23 @@ describe('T5 键表完整性（SCHEMA_DEFAULTS 与 schema 无孤儿键）', () =
   const resolved = Config({}) as Record<string, unknown>
   const groupKeys = Object.values(SETTINGS_GROUPS).flat()
 
-  it('七组结构（T8/T11/T24 增键 + 0.10.0 重排方案 A + #59 memberTools + #58 旁观 + T1 reaction）：connection 6 / permissions 18 / behavior 12+2 / bystander 5 / session 5+5 / media 16+1 / diagnostics 7', () => {
-    expect(Object.keys(SETTINGS_GROUPS)).toEqual(['connection', 'permissions', 'behavior', 'bystander', 'session', 'media', 'diagnostics'])
+  it('六组结构（T8/T11/T24 增键 + 0.10.0 重排方案 A + #59 memberTools + T1 reaction + 11.18 allowAllUsers/旁观组下架）：connection 6 / permissions 17 / behavior 14 / session 11 / media 17 / diagnostics 7', () => {
+    expect(Object.keys(SETTINGS_GROUPS)).toEqual(['connection', 'permissions', 'behavior', 'session', 'media', 'diagnostics'])
     expect(SETTINGS_GROUPS.connection).toHaveLength(6) // 0.10.0 重排：连接=通道配置（-8 键）
-    expect(SETTINGS_GROUPS.permissions).toHaveLength(18) // #59：+memberTools；T1 reaction：+reactionOnMention/reactionEmoji
+    expect(SETTINGS_GROUPS.permissions).toHaveLength(17) // #59：+memberTools；T1 reaction：+reactionOnMention/reactionEmoji；2026-11-18：allowAllUsers 从面板摘掉 -1
     expect(SETTINGS_GROUPS.behavior).toHaveLength(14) // T24：+titleSyncEnabled；0.10.0：+ignoreSelf/sidebarEntryEnabled
-    expect(SETTINGS_GROUPS.bystander).toHaveLength(5) // #58：旁观五键
+    // 2026-11-18：「旁观」整组退出组表（schema/DEFAULTS/ALL_KEYS 的 5 键保留，老配置照样能读）
+    expect(SETTINGS_GROUPS).not.toHaveProperty('bystander')
     expect(SETTINGS_GROUPS.behavior).toEqual(expect.arrayContaining(['inboxQueueEnabled', 'inboxQueueDelayMs', 'titleSyncEnabled']))
     expect(SETTINGS_GROUPS.session).toHaveLength(11) // 0.10.0：5→10（+工作区×2/强制会话/提示词文件×2）；#61 建议 2：10→11（+startupResumeEnabled）
     expect(SETTINGS_GROUPS.media).toHaveLength(17) // T6：+gifFramesEnabled；0.10.0：+allowPrivateHosts
     expect(SETTINGS_GROUPS.media).toContain('gifFramesEnabled')
     expect(SETTINGS_GROUPS.diagnostics).toHaveLength(7)
+    // 旁观 5 键仍在 schema 键表里（只是不再有面板分组）
+    for (const key of ['bystanderEnabled', 'bystanderCapacity', 'bystanderCooldownMinutes', 'bystanderDailyLimit', 'bystanderTopics']) {
+      expect(ALL_KEYS).toContain(key)
+      expect(Object.hasOwn(SCHEMA_DEFAULTS, key)).toBe(true)
+    }
   })
 
   it('SCHEMA_DEFAULTS 键集 == ALL_KEYS 键集（不多不少）', () => {

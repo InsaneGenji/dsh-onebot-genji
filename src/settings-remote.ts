@@ -77,11 +77,12 @@ export const SETTINGS_GROUPS: Readonly<Record<string, readonly string[]>> = {
   // 0.10.0 重排（用户裁定方案 A）：连接=通道配置 6 键；工作区/强制会话/提示词文件
   // 归 session；allowPrivateHosts 归 media；ignoreSelf/sidebarEntryEnabled 归 behavior。
   connection: ['mode', 'host', 'port', 'url', 'accessToken', 'botQQ'],
-  permissions: ['requireMention', 'memberTools', 'adminUsers', 'dmPolicy', 'groupPolicy', 'allowAllUsers', 'allowFrom', 'groupAllowFrom', 'wakeNamesAdmin', 'wakeNamesMember', 'replyCountsAsMention', 'atAllCountsAsMention', 'reactionOnMention', 'reactionEmoji', 'faceStyle', 'pokeEnabled', 'restrictedMemberPrefix', 'sensitivePatterns'],
+  // 2026-11-18：allowAllUsers 从权限组摘掉——dmPolicy=open 现在就是对所有人开放，
+  // 这个开关不再有界面入口（schema 与 BOOLEAN_KEYS 保留，老配置里的键照样能读）。
+  permissions: ['requireMention', 'memberTools', 'adminUsers', 'dmPolicy', 'groupPolicy', 'allowFrom', 'groupAllowFrom', 'wakeNamesAdmin', 'wakeNamesMember', 'replyCountsAsMention', 'atAllCountsAsMention', 'reactionOnMention', 'reactionEmoji', 'faceStyle', 'pokeEnabled', 'restrictedMemberPrefix', 'sensitivePatterns'],
   behavior: ['interimMessages', 'interimRecall', 'interimRecallMs', 'sendErrorNotice', 'unknownCommand', 'rateLimitPerMinute', 'newMessagePolicy', 'autoSteerPolicy', 'deferredTimeoutMs', 'inboxQueueEnabled', 'inboxQueueDelayMs', 'titleSyncEnabled', 'ignoreSelf', 'sidebarEntryEnabled'],
   // #58 群聊旁观：默认全关/空（enabled=false 时其余四键零行为）。
-  bystander: ['bystanderEnabled', 'bystanderCapacity', 'bystanderCooldownMinutes', 'bystanderDailyLimit', 'bystanderTopics'],
-  session: ['newSessionGreeting', 'firstMessageAsUser', 'memoryFilesEnabled', 'memoryFiles', 'agentPreset', 'workspacePath', 'groupWorkspacePath', 'forceSessionId', 'dmPromptFile', 'groupPromptFile', 'startupResumeEnabled'],
+  session: ['titleSyncEnabled', 'startupResumeEnabled', 'newSessionGreeting', 'memoryFilesEnabled', 'memoryFiles', 'agentPreset', 'workspacePath', 'groupWorkspacePath', 'forceSessionId', 'dmPromptFile', 'groupPromptFile'],
   media: ['sttEnabled', 'sttEngine', 'sttCommand', 'sttArgs', 'sttModel', 'textImageEnabled', 'textImageThreshold', 'cardFooter', 'fontFiles', 'fontFamilies', 'outboundImageMaxBytes', 'maxVoiceBytes', 'maxFileBytes', 'inboundImageMaxPx', 'inboundFileMaxBytes', 'gifFramesEnabled', 'allowPrivateHosts'],
   diagnostics: ['actionAuditEnabled', 'traceEnabled', 'recordInbound', 'inboxRedact', 'injectEnabled', 'injectDryRun', 'logLevel'],
 }
@@ -161,7 +162,7 @@ export const SCHEMA_DEFAULTS: Readonly<Record<string, unknown>> = {
   inboxQueueEnabled: false,
   inboxQueueDelayMs: 600,
   // T24 (PR port 会话标题同步)：开关默认关（裁定口径；钉住态标题永不覆盖）。
-  titleSyncEnabled: false,
+  titleSyncEnabled: true,
   // PENDING：新会话欢迎语/首条消息按用户身份发送。
   newSessionGreeting: true,
   firstMessageAsUser: true,
@@ -487,7 +488,7 @@ export function validatePatch(patch: unknown): Record<string, unknown> {
     } else if (NUMBER_KEYS.includes(key)) {
       const [min, max] = NUMBER_RANGE[key]
       if (typeof value === 'number' && Number.isFinite(value) && value >= min && (max === undefined || value <= max)) clean[key] = value
-      else issues.push(`${key} 必须是 ${max === undefined ? `≥${min}` : `${min}–${max}`} 的有限数字`)
+      else issues.push(`${key} 必须是 ${max === undefined ? `≥${min}` : `${min}–${max}`} 的整数`)
     } else if (BOOLEAN_KEYS.includes(key)) {
       if (typeof value === 'boolean') clean[key] = value
       else issues.push(`${key} 必须是布尔值`)

@@ -122,7 +122,7 @@ window.__ModuleLoader__.load({
 				fields: [
 					{ key: "mode", label: "连接模式", type: "enum", options: ["reverse", "forward"], optionLabels: { reverse: "反向 WebSocket（NapCat 连接本插件）", forward: "正向 WebSocket（插件连接 NapCat）" }, hint: "反向=它连我，正向=我连它" },
 					{ key: "host", label: "反向 WS 监听地址",  showIf: { key: "mode", value: "reverse" }, type: "string", hint: "反向模式监听地址" },
-					{ key: "port", label: "反向 WS 监听端口",  showIf: { key: "mode", value: "reverse" }, type: "number", hint: "反向模式监听端口" },
+					{ key: "port", label: "反向 WS 监听端口",  showIf: { key: "mode", value: "reverse" }, type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", hint: "反向模式监听端口" },
 					{ key: "url", label: "正向 WS 服务器地址",  showIf: { key: "mode", value: "forward" }, type: "string", hint: "正向模式服务器地址" },
 					{ key: "accessToken", label: "访问令牌（AccessToken）", type: "secret" },
 					{ key: "botQQ", label: "机器人 QQ 号", type: "string" },
@@ -133,28 +133,22 @@ window.__ModuleLoader__.load({
 				title: "权限",
 				// 本地加：权限分「私聊 / 群聊」两块展示（id = 分区词条键尾段；客户端展示结构，host 契约不涉）。
 				sections: [
-					{ id: "dm", title: "私聊", keys: ["dmPolicy", "allowFrom", "allowAllUsers", "adminUsers"] },
-					{ id: "group", title: "群聊", keys: ["requireMention", "memberTools", "groupPolicy", "groupAllowFrom", "wakeNamesAdmin", "wakeNamesMember", "replyCountsAsMention", "atAllCountsAsMention", "reactionOnMention", "reactionEmoji", "faceStyle", "pokeEnabled", "restrictedMemberPrefix"] },
-					{ id: "common", title: "通用", keys: ["sensitivePatterns"] },
+					{ id: "common", title: "通用", keys: ["adminUsers", "sensitivePatterns"] },
+					{ id: "dm", title: "私聊", keys: ["dmPolicy", "allowFrom"] },
+					{ id: "group", title: "群聊", keys: ["requireMention", "memberTools", "groupPolicy", "groupAllowFrom", "wakeNamesAdmin", "wakeNamesMember", "atAllCountsAsMention", "pokeEnabled"] },
 				],
 				fields: [
 					{ key: "requireMention", label: "群聊必须 @ 机器人", type: "boolean" },
 					{ key: "memberTools", label: "成员工具权限", type: "enum", options: ["none", "send", "all"], optionLabels: { none: "禁用全部", send: "仅发送类", all: "不限" }, hint: "非管理员回合可用的 qq_* 工具：仅发送类=可分条/发图（含工作区图库）" },
 					{ key: "adminUsers", label: "管理员用户列表", type: "stringArray" },
-					{ key: "dmPolicy", label: "私聊策略", type: "enum", options: ["open", "allowlist", "disabled"], optionLabels: { open: "开放", allowlist: "白名单", disabled: "禁用" } },
+					{ key: "dmPolicy", label: "私聊策略", type: "enum", options: ["open", "allowlist", "disabled"], optionLabels: { open: "开放", allowlist: "白名单", disabled: "禁用" }, hint: "开放=任何人都能私聊；白名单=只有下面名单里的 QQ 号能私聊；禁用=谁都不理" },
 					{ key: "groupPolicy", label: "群聊策略", type: "enum", options: ["open", "allowlist", "disabled"], optionLabels: { open: "开放", allowlist: "白名单", disabled: "禁用" } },
-					{ key: "allowAllUsers", label: "允许所有用户", type: "boolean" },
-					{ key: "allowFrom", label: "私聊白名单", type: "stringArray" },
-					{ key: "groupAllowFrom", label: "群聊白名单", type: "stringArray" },
+					{ key: "allowFrom", label: "私聊白名单", showIf: { key: "dmPolicy", value: "allowlist" }, type: "stringArray" },
+					{ key: "groupAllowFrom", label: "群聊白名单", showIf: { key: "groupPolicy", value: "allowlist" }, type: "stringArray" },
 					{ key: "wakeNamesAdmin", label: "用户唤醒词", type: "stringArray" },
 					{ key: "wakeNamesMember", label: "他人唤醒词", type: "stringArray" },
-					{ key: "replyCountsAsMention", label: "被引用唤醒", type: "boolean", hint: "引用别人的消息也算叫我" },
 					{ key: "atAllCountsAsMention", label: "@全体唤醒", type: "boolean", hint: "@全体成员也算叫我" },
-					{ key: "reactionOnMention", label: "@ 表情回执", type: "boolean", hint: "群里被显式 @ 后，回合启动时给那条消息贴表情回执（已收到回执）；仅 NapCat/SnowLuma 支持，其他实现静默跳过" },
-					{ key: "reactionEmoji", label: "回执表情 ID", type: "number", hint: "表情回执用的表情 ID，默认 178（微笑）" },
-					{ key: "faceStyle", label: "QQ 表情呈现方式", type: "enum", options: ["name", "emoji"], optionLabels: { name: "官方表情表", emoji: "emoji 近似（旧观感）" }, hint: "表情名或 emoji 近似" },
 				{ key: "pokeEnabled", label: "戳一戳叫醒", type: "boolean" },
-					{ key: "restrictedMemberPrefix", label: "群聊非管理员加受限前缀", type: "boolean", hint: "打开后非管理员的消息带 [受限用户:仅问答] 标记：只答问题，可以要图片和表情包；关掉一视同仁" },
 					{ key: "sensitivePatterns", label: "出站敏感词正则", type: "stringArray", placeholder: "正则，一行一个；留空用内置" },
 				],
 			},
@@ -162,60 +156,42 @@ window.__ModuleLoader__.load({
 				id: "behavior",
 				title: "行为",
 				fields: [
-					{ key: "interimMessages", label: "中间消息", type: "boolean", hint: "回合中发中间消息" },
-					{ key: "interimRecall", label: "自动撤回中间消息",  showIf: { key: "interimMessages", value: true }, type: "boolean" },
-					{ key: "interimRecallMs", label: "中间消息保留时长（毫秒）",  showIf: { key: "interimRecall", value: true }, type: "number" },
-					{ key: "sendErrorNotice", label: "发送错误通知", type: "boolean" },
+					// T7 转正：入站连发合并（开关默认关；合并窗口 600ms，首条起最多 3000ms 封顶）。
+					{ key: "rateLimitPerMinute", label: "每分钟消息频率上限", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数" },
 					{ key: "unknownCommand", label: "未知命令处理", type: "enum", options: ["intercept", "passthrough"], optionLabels: { intercept: "拦截", passthrough: "透传" } },
-					{ key: "rateLimitPerMinute", label: "每分钟消息频率上限", type: "number" },
 					{ key: "newMessagePolicy", label: "任务运行中的新消息", type: "enum", options: ["queue", "steer"], optionLabels: { queue: "排队", steer: "插话" } },
 					{ key: "autoSteerPolicy", label: "自动插话资格",  showIf: { key: "newMessagePolicy", value: "steer" }, type: "enum", options: ["admin", "all"], optionLabels: { admin: "仅管理员", all: "所有成员" } },
-					{ key: "deferredTimeoutMs", label: "等待模型回复超时（毫秒）", type: "number" },
-					// T7 转正：入站连发合并（开关默认关；合并窗口 600ms，首条起最多 3000ms 封顶）。
 					{ key: "inboxQueueEnabled", label: "入站连发合并", type: "boolean", hint: "同会话连发的多条消息合成一条投递" },
-					{ key: "inboxQueueDelayMs", label: "合并等待窗口（毫秒）", type: "number", hint: "每条消息先等一个窗口再投递；0 = 立即", showIf: { key: "inboxQueueEnabled", value: true } },
-					// T24：会话标题同步（开关默认关；用户在宿主里钉住的标题永不覆盖）。
-					{ key: "titleSyncEnabled", label: "QQ 会话标题同步", type: "boolean", hint: "每条消息后让宿主刷新会话标题（一次小 LLM 调用）；宿主里手动命名的标题不会被覆盖" },
-					{ key: "ignoreSelf", label: "忽略自己发的消息", type: "boolean", hint: "机器人自己的回声不处理" },
+					{ key: "inboxQueueDelayMs", label: "合并等待窗口（毫秒）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", hint: "每条消息先等一个窗口再投递；0 = 立即", showIf: { key: "inboxQueueEnabled", value: true } },
+					{ key: "interimMessages", label: "中间消息", type: "boolean", hint: "回合中发中间消息" },
+					{ key: "interimRecall", label: "自动撤回中间消息",  showIf: { key: "interimMessages", value: true }, type: "boolean" },
+					{ key: "interimRecallMs", label: "中间消息保留时长（毫秒）",  showIf: { key: "interimRecall", value: true }, type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数" },
+					{ key: "sendErrorNotice", label: "发送错误通知", type: "boolean" },
+					{ key: "deferredTimeoutMs", label: "等待模型回复超时（毫秒）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数" },
 					// T11：DSH 首页左侧边栏入口开关（关=不注册侧边栏入口与配对面板；
 					// 插件菜单下的设置页入口保留。客户端按启动时快照决定，改完刷新生效）。
-					{ key: "sidebarEntryEnabled", label: "首页侧边栏入口", type: "boolean", hint: "在 DSH 首页左侧边栏显示「QQ Bot」入口；改动需刷新页面生效" },
 														],
-			},
-			{
-				id: "bystander",
-				title: "旁观",
-				fields: [
-					{ key: "bystanderEnabled", label: "群聊旁观", type: "boolean", hint: "未被 @ 的群消息进旁听缓冲，命中触发条件时插一次话" },
-					{ key: "bystanderCapacity", label: "旁听缓冲条数", type: "number", showIf: { key: "bystanderEnabled", value: true } },
-					{ key: "bystanderCooldownMinutes", label: "回顾间隔（分钟）", type: "number", showIf: { key: "bystanderEnabled", value: true } },
-					{ key: "bystanderDailyLimit", label: "每日回顾上限", type: "number", showIf: { key: "bystanderEnabled", value: true } },
-					{ key: "bystanderTopics", label: "话题词表", type: "stringArray", showIf: { key: "bystanderEnabled", value: true }, placeholder: "一行一个词" },
-				],
 			},
 			{
 				id: "session",
 				title: "会话",
 				fields: [
-										{ key: "newSessionGreeting", label: "新会话主动开口", type: "boolean", hint: "/new 后我先说一句" },
-					{ key: "firstMessageAsUser", label: "首条按 User 注入", type: "boolean", hint: "开了宿主才会按第一条消息自动命名（默认关）" },
-					{ key: "memoryFilesEnabled", label: "新会话读记忆文件", type: "boolean" },
-					{ key: "memoryFiles", label: "记忆文件路径", type: "stringArray", placeholder: "文件绝对路径；分割方式：逗号、顿号、换行", showIf: { key: "memoryFilesEnabled", value: true } },
-					{ key: "agentPreset", label: "新会话智能体预设（填预设 id，如 standard；留空用宿主默认）", type: "string", placeholder: "standard" },
 					// W7：workspacePath 入面板（0.10.0 重排入会话组）。语义（对齐 README「会话工作区选择」）：
 					// 修改只对新会话生效；已设 per-chat /workspace 覆盖的会话不受影响。
-					{ key: "workspacePath", label: "私聊默认工作区路径", type: "string", hint: "私聊新会话的默认目录" },
-					{ key: "groupWorkspacePath", label: "群聊默认工作区路径", type: "string", hint: "群聊新会话的默认目录；留空则同私聊" },
-				// T8：forceSessionId 入面板（host SETTINGS_GROUPS session 组列出，默认 ''）。
-				{ key: "forceSessionId", label: "强制会话 ID", type: "string", hint: "填了就固定用这个会话 id（高级用法，一般留空）" },
 					// 本地加（2026-10-30）：提示词走文件，不塞进 yml——两段各一万多字，块写法容易被手改花。
 					// 语义：路径填了且读得到就用文件内容当 dmPrompt/groupPrompt（每行左侧空白全删），
 					// 读不到或留空就退回 yml 里的内联文本；改完文件要保存一次让插件重启才生效。
-					{ key: "dmPromptFile", label: "私聊提示词文件（txt 路径）", type: "string", placeholder: "~/.dsh/onebot/prompts/dm.txt" },
-					{ key: "groupPromptFile", label: "群聊提示词文件（txt 路径）", type: "string", placeholder: "~/.dsh/onebot/prompts/group.txt" },
 					// #61 建议 2：启动恢复会话开关（默认开 = 既有启动 resume 行为；关 =
 					// 每次重启都开全新会话，旧会话记录与日志保留不动）。
+					{ key: "titleSyncEnabled", label: "会话自动重命名", type: "boolean", hint: "私聊按「昵称（QQ号）」，群聊按「群名（群号）」" },
 					{ key: "startupResumeEnabled", label: "启动恢复会话", type: "boolean", hint: "启动时按上次会话记录接回各聊天的原会话；关掉后每次重启都开全新会话（旧会话记录与日志保留不动）；改动重启插件后生效" },
+										{ key: "newSessionGreeting", label: "新会话主动开口", type: "boolean", hint: "/new 后我先说一句" },
+					{ key: "memoryFilesEnabled", label: "新会话读记忆文件", type: "boolean" },
+					{ key: "memoryFiles", label: "记忆文件路径", type: "stringArray", placeholder: "文件绝对路径；分割方式：逗号、顿号、换行", showIf: { key: "memoryFilesEnabled", value: true } },
+					{ key: "workspacePath", label: "私聊默认工作区路径", type: "string", hint: "私聊新会话的默认目录" },
+					{ key: "dmPromptFile", label: "私聊提示词文件（txt 路径）", type: "string", placeholder: "~/.dsh/onebot/prompts/dm.txt" },
+					{ key: "groupWorkspacePath", label: "群聊默认工作区路径", type: "string", hint: "群聊新会话的默认目录；留空则同私聊" },
+					{ key: "groupPromptFile", label: "群聊提示词文件（txt 路径）", type: "string", placeholder: "~/.dsh/onebot/prompts/group.txt" },
 				],
 			},
 			{
@@ -228,15 +204,15 @@ window.__ModuleLoader__.load({
 					{ key: "sttArgs", label: "转写参数模板", type: "stringArray", placeholder: "一行一个；{file} 和 {out} 会被替换；留空 = 用内置模板", showIf: { key: "sttEngine", value: "custom" } },
 					{ key: "sttModel", label: "转写模型", type: "string", hint: "openai / 内置桥: small/base/medium…；whisper.cpp: 模型名或 .bin 路径", showIf: { key: "sttEngine", values: ["openai", "custom"] } },
 					{ key: "textImageEnabled", label: "长文转图片卡片", type: "boolean" },
-					{ key: "textImageThreshold", label: "转卡片的字数阈值",  showIf: { key: "textImageEnabled", value: true }, type: "number", placeholder: "0–10000；0 = 不转卡片" },
+					{ key: "textImageThreshold", label: "转卡片的字数阈值",  showIf: { key: "textImageEnabled", value: true }, type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", placeholder: "0–10000；0 = 不转卡片" },
 					{ key: "cardFooter", label: "卡片页脚角标", type: "string", placeholder: "OneBot" },
 					{ key: "fontFiles", label: "卡片字体文件", type: "stringArray", placeholder: "一行一个字体文件路径（ttf/otf）；留空用系统字体" },
 					{ key: "fontFamilies", label: "卡片字体家族名", type: "stringArray", placeholder: "一行一个字体家族名；留空用平台默认" },
-					{ key: "outboundImageMaxBytes", label: "出站图片大小上限（字节）", type: "number", placeholder: "默认 8388608（8MB）；最高 104857600（100MB）" },
-					{ key: "maxVoiceBytes", label: "出站语音大小上限（字节）", type: "number", placeholder: "默认 15728640（15MB）；最高 52428800（50MB）" },
-					{ key: "maxFileBytes", label: "出站文件/视频大小上限（字节）", type: "number", placeholder: "默认 20971520（20MB）；最高 4294967296（4G）" },
-					{ key: "inboundImageMaxPx", label: "入站图片长边上限（像素）", type: "number", placeholder: "默认 2048；推荐 1440 以上" },
-					{ key: "inboundFileMaxBytes", label: "入站文件大小上限（字节）", type: "number", placeholder: "默认 20971520（20MB）；0 = 不限" },
+					{ key: "outboundImageMaxBytes", label: "出站图片大小上限（字节）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", placeholder: "默认 8388608（8MB）；最高 104857600（100MB）" },
+					{ key: "maxVoiceBytes", label: "出站语音大小上限（字节）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", placeholder: "默认 15728640（15MB）；最高 52428800（50MB）" },
+					{ key: "maxFileBytes", label: "出站文件/视频大小上限（字节）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", placeholder: "默认 20971520（20MB）；最高 4294967296（4G）" },
+					{ key: "inboundImageMaxPx", label: "入站图片长边上限（像素）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", placeholder: "默认 2048；推荐 1440 以上" },
+					{ key: "inboundFileMaxBytes", label: "入站文件大小上限（字节）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", placeholder: "默认 20971520（20MB）；0 = 不限" },
 					// T6 转正：GIF 分帧（默认关；关闭时不装依赖也不触碰 FS）。
 					{ key: "gifFramesEnabled", label: "GIF 动图分帧", type: "boolean", hint: "收到 GIF 时在消息旁附一张抽 4 帧的纵向长图，让模型看懂动画过程（默认关）" },
 					// 本地加（2026-11-01）：NapCat 文件服务/反代在本机或内网时，下载检查得放行。
@@ -289,14 +265,14 @@ window.__ModuleLoader__.load({
 			dmPolicy: "open",
 			groupPolicy: "open",
 			allowAllUsers: false,
+			sidebarEntryEnabled: true,
+			titleSyncEnabled: true,
 			allowFrom: [],
 			groupAllowFrom: [],
 			wakeNamesAdmin: [],
 			wakeNamesMember: [],
 			replyCountsAsMention: false,
 			atAllCountsAsMention: false,
-			reactionOnMention: false,
-			reactionEmoji: 178,
 			faceStyle: "name",
 			pokeEnabled: true,
 			interimMessages: true,
@@ -316,7 +292,6 @@ window.__ModuleLoader__.load({
 			memoryFiles: [],
 			ignoreSelf: true,
 			// T11：侧边栏入口开关（用户裁定默认开）。
-			sidebarEntryEnabled: true,
 			sttEnabled: true,
 			agentPreset: "",
 			chatIdleEvictDays: 7,
@@ -349,7 +324,6 @@ window.__ModuleLoader__.load({
 			inboxQueueEnabled: false,
 			inboxQueueDelayMs: 600,
 			// T24：QQ 会话标题同步开关（默认关）。
-			titleSyncEnabled: false,
 		};
 		// T8：notices 通知开关补上面板。值可以是 false=不发 / true=默认文案 /
 		// 字符串=自定义文案。5 键对齐 src/settings-remote.ts NOTICE_KEYS（本仓
@@ -508,8 +482,6 @@ window.__ModuleLoader__.load({
 			wakeNamesMember: vArray(vString(0, 64)),
 			replyCountsAsMention: vBoolean(),
 			atAllCountsAsMention: vBoolean(),
-			reactionOnMention: vBoolean(),
-			reactionEmoji: vNumber(),
 			faceStyle: vEnum(["name", "emoji"]),
 			pokeEnabled: vBoolean(),
 			interimMessages: vBoolean(),
@@ -620,8 +592,6 @@ window.__ModuleLoader__.load({
 			wakeNamesMember: vOptional(vArray(vString(0, 64))),
 			replyCountsAsMention: vOptional(vBoolean()),
 			atAllCountsAsMention: vOptional(vBoolean()),
-			reactionOnMention: vOptional(vBoolean()),
-			reactionEmoji: vOptional(vNumber(0)),
 			faceStyle: vOptional(vEnum(["name", "emoji"])),
 			pokeEnabled: vOptional(vBoolean()),
 			restrictedMemberPrefix: vOptional(vBoolean()),
@@ -763,7 +733,7 @@ window.__ModuleLoader__.load({
 			// zh/en 同批齐平；既有键文案不改）。
 			"conflict.kept": "已保留 {count} 项未冲突的修改，请核对后重新保存。",
 			"conflict.secretCleared": "accessToken 输入已清空，如需修改请重新输入。",
-			"field.numberInvalid": "必须是 {range} 的有限数字",
+			"field.numberInvalid": "必须是 {range}",
 			"field.remoteOverwritten": "已被其他来源修改，已同步为最新值",
 			// T11：首页左侧边栏入口词条（sidebar.panellist 的 label；en 同批齐平）。
 			"sidebar.panel": "QQ Bot",
@@ -821,7 +791,7 @@ window.__ModuleLoader__.load({
 			// 批 3（UX §5.4/§5.6）：与 zh 同批新增的 4 键（冲突合并保留 + 数字行内校验）。
 			"conflict.kept": "Kept {count} non-conflicting change(s) — review and save again.",
 			"conflict.secretCleared": "The accessToken input has been cleared; re-enter it if you still want to change it.",
-			"field.numberInvalid": "Must be a finite number {range}",
+			"field.numberInvalid": "Must be {range}",
 			"field.remoteOverwritten": "Changed by another source — synced to the latest value",
 			"sidebar.panel": "QQ Bot",
 			// 0.10.0 字段文案词条化：与 zh 同批的面板自有 UI 串。
@@ -893,13 +863,8 @@ window.__ModuleLoader__.load({
 					groupAllowFrom: { label: "Group allowlist" },
 					wakeNamesAdmin: { label: "User wake names" },
 					wakeNamesMember: { label: "Member wake names" },
-					replyCountsAsMention: { label: "Quoted-message wakes", hint: "Quoting someone else's message also wakes me" },
 					atAllCountsAsMention: { label: "@-all wakes", hint: "@-ing everyone also counts as a wake" },
-					reactionOnMention: { label: "@ reaction receipt", hint: "After an explicit @ in a group chat, attach an emoji reaction to that message when the turn starts (acknowledged receipt); NapCat/SnowLuma only, silently skipped elsewhere" },
-					reactionEmoji: { label: "Reaction emoji ID", hint: "Emoji ID for the reaction receipt, default 178 (smile)" },
-					faceStyle: { label: "QQ face rendering", hint: "Face names or emoji approximation", options: { name: "Official face table", emoji: "Emoji approximation (legacy look)" } },
 					pokeEnabled: { label: "Poke wakes" },
-					restrictedMemberPrefix: { label: "Restricted prefix for non-admins", hint: "When on, non-admin group messages carry a [restricted user: Q&A only] marker: answers questions only, may still request images and stickers; off = treat everyone the same" },
 					sensitivePatterns: { label: "Outbound sensitive-word regexes", placeholder: "One regex per line; empty = built-in list" },
 				},
 			},
@@ -917,33 +882,18 @@ window.__ModuleLoader__.load({
 					deferredTimeoutMs: { label: "Model reply wait timeout (ms)" },
 					inboxQueueEnabled: { label: "Inbound burst merging", hint: "Merge several messages burst-sent to one session into a single delivery" },
 					inboxQueueDelayMs: { label: "Merge wait window (ms)", hint: "Each message waits one window before delivery; 0 = immediately" },
-					titleSyncEnabled: { label: "QQ session title sync", hint: "Let the host refresh session titles after each message (one small LLM call); titles you named manually in the host are never overwritten" },
-					ignoreSelf: { label: "Ignore own messages", hint: "Do not process the bot's own echo messages" },
-					sidebarEntryEnabled: { label: "Home sidebar entry", hint: "Show a \"QQ Bot\" entry in the DSH home sidebar; changes apply after a page reload" },
-				},
-			},
-			bystander: {
-				title: "Lurk",
-				fields: {
-					bystanderEnabled: { label: "Group lurking", hint: "Un-@ed group messages feed a per-group buffer; triggers open one review turn" },
-					bystanderCapacity: { label: "Buffer size (entries)" },
-					bystanderCooldownMinutes: { label: "Review cooldown (minutes)" },
-					bystanderDailyLimit: { label: "Daily review cap" },
-					bystanderTopics: { label: "Topic keywords", placeholder: "One keyword per line" },
 				},
 			},
 			session: {
 				title: "Session",
 				fields: {
 					newSessionGreeting: { label: "Greet on new sessions", hint: "After /new I say hello first" },
-					firstMessageAsUser: { label: "Inject first message as User", hint: "The host auto-names the session from the first message only when this is on (default off)" },
+					titleSyncEnabled: { label: "Auto-rename sessions", hint: "DM: nickname (QQ number); group: group name (group number)" },
 					startupResumeEnabled: { label: "Resume sessions on startup", hint: "Rejoin each chat's last session on startup; off = every restart starts brand-new sessions (old mappings and logs are left untouched); changes apply after a plugin restart" },
 					memoryFilesEnabled: { label: "Read memory files on new sessions" },
 					memoryFiles: { label: "Memory file paths", placeholder: "Absolute file paths; split by comma, enumeration comma, or newline" },
-					agentPreset: { label: "Agent preset for new sessions (preset id, e.g. standard; empty = host default)", placeholder: "standard" },
 					workspacePath: { label: "Default DM workspace path", hint: "Default directory for new DM sessions" },
 					groupWorkspacePath: { label: "Default group workspace path", hint: "Default directory for new group sessions; empty = same as DM" },
-					forceSessionId: { label: "Force session id", hint: "When set, always use this session id (advanced; usually left empty)" },
 					dmPromptFile: { label: "DM prompt file (txt path)" },
 					groupPromptFile: { label: "Group prompt file (txt path)" },
 				},
@@ -1065,9 +1015,9 @@ window.__ModuleLoader__.load({
 			// 分组（平铺文档流；字段行间发丝分隔 = 原生表单形态）
 			".obx-group{display:flex;flex-direction:column}",
 			".obx-group-head{display:flex;align-items:baseline;gap:8px;padding-bottom:4px;flex-wrap:wrap}",
-			".obx-group-title{margin:0;font-size:14px;font-weight:500;line-height:20px}",
+			".obx-group-title{margin:0;font-size:16px;font-weight:500;line-height:22px}",
 			".obx-group-desc{margin:0;color:var(--obx-fg-tertiary);font-size:12px;line-height:18px}",
-			".obx-subgroup-title{margin:14px 0 2px;font-size:13px;font-weight:600;line-height:20px}",
+			".obx-subgroup-title{margin:14px 0 2px;font-size:14px;font-weight:600;line-height:20px}",
 			".obx-subgroup-title:first-child{margin-top:0}",
 			// 字段行：值/枚举/多行为纵向（label 上、控件下、hint 再下），布尔/通知为左右行
 			".obx-field{display:flex;flex-direction:column;gap:6px;padding:12px 0;border-top:.5px solid var(--obx-hairline)}",
@@ -1075,7 +1025,7 @@ window.__ModuleLoader__.load({
 			".obx-field--row{flex-direction:row;align-items:center;justify-content:space-between;gap:16px}",
 			".obx-field-text{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}",
 			".obx-field-head{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}",
-			".obx-label{font-size:13px;font-weight:500;line-height:1.5;color:var(--obx-fg)}",
+			".obx-label{font-size:14px;font-weight:500;line-height:1.5;color:var(--obx-fg)}",
 			".obx-hint{margin:0;color:var(--obx-fg-tertiary);font-size:12px;line-height:1.5;min-width:0}",
 			".obx-hint--warn{color:var(--obx-warn)}",
 			".obx-hint--invalid{color:var(--obx-error)}",
@@ -1109,9 +1059,13 @@ window.__ModuleLoader__.load({
 			".obx-btn--primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,#3c3c3d)}",
 			"@media (prefers-color-scheme: dark){.obx-btn--primary{background:var(--dsw-alias-label-primary,#eceef2);color:var(--dsw-alias-label-primary-foreground,#17181a)}}",
 			".obx-segmented{display:inline-flex;gap:2px;padding:3px;border-radius:var(--obx-radius-md);background:var(--obx-well-bg);max-width:100%}",
-			".obx-segmented-tab{box-sizing:border-box;height:26px;padding:0 12px;border:0;border-radius:var(--obx-radius-sm);background:transparent;color:var(--obx-fg-secondary);font:inherit;font-size:13px;font-weight:500;line-height:20px;cursor:pointer;white-space:nowrap}",
+			".obx-segmented-tab{box-sizing:border-box;height:26px;padding:0 12px;border:0;border-radius:var(--obx-radius-sm);background:transparent;color:var(--obx-fg-secondary);font:inherit;font-size:14px;font-weight:500;line-height:20px;cursor:pointer;white-space:nowrap}",
 			".obx-segmented-tab[aria-selected=true]{background:var(--obx-input-bg);color:var(--obx-fg);box-shadow:0 1px 2px rgba(0,0,0,.08)}",
 			".obx-segmented-tab:disabled{cursor:default;opacity:.4}",
+			// 本地改（2026-11-18）：顶部组切换条（连接/权限/行为…）字号 16，比字段枚举控件大一档。
+			".obx-group-tabs .obx-segmented-tab{font-size:16px;font-weight:500;height:32px;padding:0 14px;line-height:24px}",
+			// 同一档字号的兜底选择器（老的 .obx-tabs 容器类仍在用，双保险）。
+			".obx-tabs .obx-segmented-tab{font-size:16px;font-weight:500;height:32px;padding:0 14px;line-height:24px}",
 			// workspace 快速填入行（卡内嵌次级行；说明独占一行）
 			".obx-workspace-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 12px;border-radius:var(--obx-radius-md);background:var(--obx-well-bg)}",
 			".obx-workspace-row .obx-hint{flex-basis:100%}",
@@ -1238,12 +1192,10 @@ window.__ModuleLoader__.load({
 		 */
 		var NUMBER_RANGE: any = {
 			port: [1, 65535],
-			// T1 reaction：表情 ID（非负整数）。
-			reactionEmoji: [0, undefined],
-			interimRecallMs: [0, undefined],
 			rateLimitPerMinute: [0, undefined],
-			deferredTimeoutMs: [0, undefined],
+			interimRecallMs: [0, undefined],
 			inboxQueueDelayMs: [0, undefined],
+			deferredTimeoutMs: [0, undefined],
 			// #58 旁观：容量条数 / 冷却分钟 / 每日上限。
 			bystanderCapacity: [5, 500],
 			bystanderCooldownMinutes: [5, 1440],
@@ -1273,7 +1225,7 @@ window.__ModuleLoader__.load({
 				: [0, undefined];
 			var n = coerceValue(field, raw);
 			if (Number.isFinite(n) && n >= range[0] && (range[1] === undefined || n <= range[1])) return null;
-			return range[1] === undefined ? "≥" + range[0] : range[0] + "–" + range[1];
+			return range[1] === undefined ? "≥" + range[0] + " 的整数" : range[0] + "–" + range[1] + " 的整数";
 		}
 
 		/**
@@ -1420,7 +1372,7 @@ window.__ModuleLoader__.load({
 					props.options.map(function (option: any) { return segmentedItem(props, "tab", option); }));
 			};
 			var segmentedTabs = function (props: any) {
-				return h(ReactImpl, "div", { className: "obx-segmented obx-tabs", role: "tablist", "aria-label": props.label },
+				return h(ReactImpl, "div", { className: "obx-segmented obx-tabs obx-group-tabs", role: "tablist", "aria-label": props.label },
 					props.items.map(function (item: any) { return segmentedItem(props, "tab", item); }));
 			};
 			var input = function (props: any) {
@@ -1669,18 +1621,19 @@ window.__ModuleLoader__.load({
 			});
 			// T8：notices 通知开关——每条一行开关 + 一个文案框（开关关着就不显示）。
 			// 文案框默认显示上游原文；改成别的就发改后的那句；改回原文等于跟随默认。
-			var renderNoticeRows = function (group: any) {
+			// 本地改（2026-11-18）：notices 文案不在 ALL_FIELDS 里，之前永远不挂「非默认」
+			// 徽标。判定统一走 nonDefaultKeys（与普通字段同源，反映已保存值）。
+			var noticeNonDefaultBadge = function (nk: any) {
+				if (nonDefaultKeys.indexOf("notices." + nk.key) < 0) return null;
+				return h(ReactImpl, ui.Tag, { tone: "neutral", children: h(ReactImpl, "span", { title: tr("field.nonDefaultTitle", "与默认值不同") }, tr("field.nonDefault", "非默认")) });
+			};
+			var renderNoticeRows = function (group: any, byKeyEarly: any, consumed: any) {
 				if (group.id !== "behavior" && group.id !== "session") return [];
 				var rows: any[] = [];
-				// T8：回答回执/超时补发/限流恒显；排队/插话两条按「任务运行中的新消息」
-				// 当前档位只显示对应那一条——选了插话就只留插话提示，排队提示那条
-				// 压根不生效，别摆那儿误导。
-				var policy = draft["newMessagePolicy"];
+				// 本地改（2026-11-18）：排队提示 / 插话提示两条都恒显（各自可关、可改文案），
+				// 不再随「任务运行中的新消息」档位隐藏。
 				var wanted = NOTICE_KEYS.filter(function (nk) {
-					if (group.id !== "behavior") return false;
-					if (nk.key === "queue") return policy === "queue";
-					if (nk.key === "steerAccepted") return policy !== "queue";
-					return true;
+					return group.id === "behavior";
 				});
 				// 用 forEach 而不是 for-of：var 在循环里只有一个变量，回调全指到最后一项，
 				// 点「排队提示」会改成「插话提示」——串味的根儿在这儿。
@@ -1701,7 +1654,7 @@ window.__ModuleLoader__.load({
 						h(ReactImpl, "div", { className: "obx-field obx-field--row", key: "nt-" + nk.key },
 							h(ReactImpl, "div", { className: "obx-field-text" },
 								h(ReactImpl, "div", { className: "obx-field-head" },
-									h(ReactImpl, "span", { className: "obx-label" }, noticeLabel))),
+									h(ReactImpl, "span", { className: "obx-label" }, noticeLabel), noticeNonDefaultBadge(nk))),
 							h(ReactImpl, ui.Switch, {
 								checked: nOn, label: noticeLabel, disabled: options.disabled === true,
 								onChange: function () { if (options.disabled !== true) setNoticeState({ on: !nOn }); },
@@ -1718,17 +1671,49 @@ window.__ModuleLoader__.load({
 								"aria-label": format(tr("notice.textAria", "{label}文案"), { label: noticeLabel }),
 							})));
 					}
+					// 本地改（2026-11-18）：发送错误通知挪到整组最下面（notices 段之后再插回）。
+					if (nk.key === "steerAccepted" && group.id === "behavior") consumed["sendErrorNotice"] = "tail";
+					// 本地改（2026-11-18）：等待模型回复超时挪到「超时补发提示」下面，只在它开着时显示。
+					if (nk.key === "deferredTimeout" && nOn && byKeyEarly["deferredTimeoutMs"] != null) {
+						consumed["deferredTimeoutMs"] = true;
+						rows = rows.concat(rowNodes);
+						rows = rows.concat(byKeyEarly["deferredTimeoutMs"]);
+						return;
+					}
 					rows = rows.concat(rowNodes);
 				});
 				return rows;
 			};
-			fieldNodes = fieldNodes.concat(renderNoticeRows(group));
+			// 本地改（2026-11-18）：先按 key 建索引，好把 deferredTimeoutMs 这类字段挪进 notices 段渲染。
+			var byKeyEarly: any = {};
+			group.fields.forEach(function (field: any, index: any) { byKeyEarly[field.key] = fieldNodes[index]; });
+			var consumedNoticeFields: any = {};
+			var noticeRows = renderNoticeRows(group, byKeyEarly, consumedNoticeFields);
+			var tailFieldNodes: any = [];
+			fieldNodes = fieldNodes.map(function (node: any, index: any) {
+				var noticeField = group.fields[index];
+				if (noticeField == null) return node;
+				var consumedMode = consumedNoticeFields[noticeField.key];
+				if (consumedMode === "tail") { tailFieldNodes.push(node); return null; }
+				if (consumedMode === true) return null;
+				return node;
+			});
+			fieldNodes = fieldNodes.concat(noticeRows).concat(tailFieldNodes);
 			// 本地加：组内分区（如权限的私聊/群聊）——按 keys 顺序取已渲染的字段节点，
 			// 每块前面插一个小标题（标题走词条，zh 源 = GROUPS.sections.title 自动灌入）。
 			if (Array.isArray(group.sections) && group.sections.length > 0) {
 				var byKey: any = {};
 				group.fields.forEach(function (field: any, index: any) { byKey[field.key] = fieldNodes[index]; });
 				var sectioned = [];
+				// 本地加：没归进任何分区的字段先渲染 —— 落在组标题下、第一个分区标题之上
+				//（如权限组的「管理员用户列表」）。
+				var claimedBySection: any = {};
+				for (var claimSection of group.sections) {
+					for (var claimKey of claimSection.keys) claimedBySection[claimKey] = true;
+				}
+				for (var looseField of group.fields) {
+					if (claimedBySection[looseField.key] !== true && byKey[looseField.key] != null) sectioned.push(byKey[looseField.key]);
+				}
 				for (var section of group.sections) {
 					sectioned.push(h(ReactImpl, "h4", { className: "obx-subgroup-title", key: "sec-" + section.id },
 						tr("group." + group.id + ".section." + section.id, section.title)));
@@ -2147,6 +2132,14 @@ window.__ModuleLoader__.load({
 			if (snapshot.config != null) {
 				for (var field of ALL_FIELDS) {
 					if (valueEquals(snapshot.config[field.key], DEFAULTS[field.key]) === false) nonDefaultKeys.push(field.key);
+				// 本地改（2026-11-18）：notices 文案不在 ALL_FIELDS 里，按已保存值单独判一遍，
+				// 让「插话提示/排队提示/回答回执/超时补发/限流提示」也能挂「非默认」徽标。
+				var savedNotices = snapshot.config.notices != null && typeof snapshot.config.notices === "object" ? snapshot.config.notices : {};
+				for (var noticeMeta of NOTICE_KEYS) {
+					var savedNotice = Object.prototype.hasOwnProperty.call(savedNotices, noticeMeta.key) ? savedNotices[noticeMeta.key] : undefined;
+					var savedNoticeState = noticeToDraft(savedNotice, noticeMeta.def);
+					if (savedNoticeState.on !== true || savedNoticeState.text !== noticeMeta.def) nonDefaultKeys.push("notices." + noticeMeta.key);
+				}
 				}
 			}
 
@@ -2378,7 +2371,7 @@ window.__ModuleLoader__.load({
 			var sidebarEnabled = true;
 			try {
 				var sidebarSnapshot = await remote.getSettings();
-				sidebarEnabled = sidebarSnapshot.config.sidebarEntryEnabled !== false;
+				sidebarEnabled = true; // 本地改（2026-11-18）：首页侧边栏入口写死开启（设置项已下架）
 			} catch (error) {
 				sidebarEnabled = true; // 快照读取失败按 schema 默认值（开）兜底
 			}
