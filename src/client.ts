@@ -223,10 +223,10 @@ window.__ModuleLoader__.load({
 				title: "媒体",
 				fields: [
 					{ key: "sttEnabled", label: "语音转写", type: "boolean", hint: "语音消息先转成文字" },
-					{ key: "sttEngine", label: "语音转写引擎", type: "enum", options: ["auto", "openai", "whisper-cpp", "custom"], optionLabels: { auto: "自动探测", openai: "openai", "whisper-cpp": "whisper-cpp", custom: "自定义命令" } },
-					{ key: "sttCommand", label: "自定义转写程序", type: "string", hint: "程序名或绝对路径", showIf: { key: "sttEngine", value: "custom" } },
-					{ key: "sttArgs", label: "转写参数模板", type: "stringArray", placeholder: "一行一个；{file} 和 {out} 会被替换", showIf: { key: "sttEngine", value: "custom" } },
-					{ key: "sttModel", label: "转写模型", type: "string", hint: "openai: small/base/medium…；whisper.cpp: 模型名或 .bin 路径", showIf: { key: "sttEngine", value: "openai" } },
+					{ key: "sttEngine", label: "语音转写引擎", type: "enum", options: ["auto", "openai", "whisper-cpp", "custom"], optionLabels: { auto: "自动探测", openai: "openai", "whisper-cpp": "whisper-cpp", custom: "自定义命令" }, hint: "自动探测：先找 whisper-cli / whisper / mlx_whisper，都没有就用插件自带的 Python 桥" },
+					{ key: "sttCommand", label: "自定义转写程序", type: "string", hint: "程序名或绝对路径；留空 = 用插件自带的 stt_cli.py（自动找 PATH 上的 python，需要 pip install faster-whisper）", showIf: { key: "sttEngine", value: "custom" } },
+					{ key: "sttArgs", label: "转写参数模板", type: "stringArray", placeholder: "一行一个；{file} 和 {out} 会被替换；留空 = 用内置模板", showIf: { key: "sttEngine", value: "custom" } },
+					{ key: "sttModel", label: "转写模型", type: "string", hint: "openai / 内置桥: small/base/medium…；whisper.cpp: 模型名或 .bin 路径", showIf: { key: "sttEngine", values: ["openai", "custom"] } },
 					{ key: "textImageEnabled", label: "长文转图片卡片", type: "boolean" },
 					{ key: "textImageThreshold", label: "转卡片的字数阈值",  showIf: { key: "textImageEnabled", value: true }, type: "number", placeholder: "0–10000；0 = 不转卡片" },
 					{ key: "cardFooter", label: "卡片页脚角标", type: "string", placeholder: "OneBot" },
@@ -321,7 +321,7 @@ window.__ModuleLoader__.load({
 			agentPreset: "",
 			chatIdleEvictDays: 7,
 			logLevel: "info",
-			textImageEnabled: true,
+			textImageEnabled: false,
 			textImageThreshold: 350,
 			cardFooter: "OneBot",
 			allowPrivateHosts: true,
@@ -953,9 +953,9 @@ window.__ModuleLoader__.load({
 				fields: {
 					sttEnabled: { label: "Speech-to-text", hint: "Transcribe voice messages to text first" },
 					sttEngine: { label: "Speech-to-text engine", options: { auto: "Auto-detect", openai: "openai", "whisper-cpp": "whisper-cpp", custom: "Custom command" } },
-					sttCommand: { label: "Custom transcription program", hint: "Program name or absolute path" },
-					sttArgs: { label: "Transcription argument template", placeholder: "One per line; {file} and {out} are substituted" },
-					sttModel: { label: "Transcription model", hint: "openai: small/base/medium…; whisper.cpp: model name or .bin path" },
+					sttCommand: { label: "Custom transcription program", hint: "Program name or absolute path; empty = the bundled stt_cli.py (finds python on PATH; needs pip install faster-whisper)" },
+					sttArgs: { label: "Transcription argument template", placeholder: "One per line; {file} and {out} are substituted; empty = built-in template" },
+					sttModel: { label: "Transcription model", hint: "openai / bundled bridge: small/base/medium…; whisper.cpp: model name or .bin path" },
 					textImageEnabled: { label: "Long text as image card" },
 					textImageThreshold: { label: "Text-length threshold for cards", placeholder: "0–10000; 0 = never card" },
 					cardFooter: { label: "Card footer badge", placeholder: "OneBot" },
@@ -1537,8 +1537,15 @@ window.__ModuleLoader__.load({
 			};
 			var fieldNodes = group.fields.map(function (field: any) {
 				// 本地加（11.1）：showIf 条件不满足就整行不渲染（索引保持对齐，按 key 取节点仍有效）。
-				if (field.showIf && draft[field.showIf.key] !== field.showIf.value)
-					return null;
+				// 11.18（本地）：额外支持 `values: [...]`——一个字段可能对多个选项可见
+				// （转写模型在 openai / 自定义命令两种引擎下都该能改）。
+				if (field.showIf) {
+					var showCond = field.showIf;
+					var showOk = showCond.values !== undefined
+						? showCond.values.indexOf(draft[showCond.key]) >= 0
+						: draft[showCond.key] === showCond.value;
+					if (!showOk) return null;
+				}
 				var value = draft[field.key];
 				// 批 2（UX §3.2）：mode 联动——非当前模式的连接字段禁用变暗（值保留在
 				// 草稿，computePatch 值比较语义不变；hint 行追加「当前模式不生效」）。

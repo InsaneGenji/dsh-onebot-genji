@@ -49,6 +49,19 @@ export declare function writeSilkWav(bytes: Uint8Array, outPath: string): Promis
  */
 export declare function findCommand(name: string): Promise<string | undefined>;
 /**
+ * 找一个**真能跑**的 Python 解释器（Windows 上是 python.exe，或 py.exe 启动器）。
+ *
+ * 只看 PATH 不够，两件事都得验：
+ * 1. Windows 的「应用执行别名」会在 WindowsApps 下留一个 python.exe，一执行就退
+ *    9009（"Python was not found"）——把它当解释器用，每条语音都白炸一次。
+ * 2. `py.exe` 启动器本身永远能跑，但它指向的默认解释器里未必装了 faster-whisper
+ *    ——那样本地兜底一样跑不起来。
+ *
+ * 所以先挑**装了 faster-whisper** 的解释器（内置脚本真正需要的依赖），一个都没有
+ * 再退一步挑只是能跑的（配合常驻服务或外部引擎仍然有用）。结果由调用方缓存。
+ */
+export declare function findPython(): Promise<string | undefined>;
+/**
  * Voice transcription service. One instance per plugin; calls are serialized
  * through a queue so concurrent voice messages cannot stack CPU-bound
  * whisper processes.
@@ -57,9 +70,12 @@ export declare class Transcriber {
     private readonly config;
     private queue;
     private ffmpegChecked;
+    private pythonChecked;
     constructor(config: SttConfig);
     /** Whether transcription is enabled by config. */
     get enabled(): boolean;
+    /** 缓存 Python 探测结果（undefined=还没查，null=明确没有）。 */
+    private pythonBinary;
     /**
      * Transcribe a voice file. SILK v3 input is decoded to PCM/WAV directly;
      * everything else is converted to 16 kHz mono WAV with ffmpeg; the WAV is
@@ -71,6 +87,8 @@ export declare class Transcriber {
     transcribe(filePath: string): Promise<string>;
     private transcribeNow;
     private resolveEngine;
+    /** custom 引擎真正要跑的程序与参数（没配就用插件自带的 stt_cli.py）。 */
+    private customSpec;
     private runEngine;
 }
 /** Convenience: transcription result for the bridge. */

@@ -455,13 +455,13 @@ export const Config: Z<Config> = z.object({
   maxFileBytes: z.number().default(MEDIA_MAX_BYTES)
     .description('出站视频/文件大小上限（字节）'),
   sttEnabled: z.boolean().default(true)
-    .description('入站语音是否转写（需要 ffmpeg 和 whisper CLI；失败时降级为 [语音] 占位）'),
+    .description('入站语音是否转写（需要 ffmpeg；引擎可以是 whisper CLI、插件自带的 Python 桥，或自定义命令；失败时降级为 [语音] 占位）'),
   sttEngine: z.union([z.const('auto'), z.const('openai'), z.const('whisper-cpp'), z.const('custom')]).default('auto')
-    .description('STT 引擎：auto 自动探测 whisper-cli / whisper / mlx_whisper'),
+    .description('STT 引擎：auto 依次探测 whisper-cli / whisper / mlx_whisper，都没有就用插件自带的 Python 桥（stt_cli.py，需要 Python + faster-whisper）'),
   sttCommand: z.string().default('')
-    .description('custom 引擎的程序名/路径'),
+    .description('custom 引擎的程序名/路径；留空则用插件自带的 stt_cli.py（自动找 PATH 上的 python/python3/py）'),
   sttArgs: z.array(z.string()).default([])
-    .description('custom 引擎参数模板，{file} 与 {out} 会被替换'),
+    .description('custom 引擎参数模板，{file} 与 {out} 会被替换；程序留空时这项也用内置模板'),
   sttModel: z.string().default('small')
     .description('whisper 模型（openai: small/base/medium...；whisper.cpp: 模型名或 .bin 绝对路径）'),
   sttTimeoutMs: z.number().default(60_000)
