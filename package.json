@@ -1,7 +1,7 @@
 {
-  "name": "dsh-onebot-qq",
+  "name": "dsh-onebot-genji",
   "version": "0.11.0",
-  "description": "给 dsh（DeepSeek Harness）加 QQ 机器人通道：OneBot 11 协议，兼容 NapCat，支持私聊群聊、图片语音、t2i 卡片与设置页配置。QQ bot channel plugin for deepseek harness via OneBot 11.",
+  "description": "由 InsaneGenji 维护的 QQ 通道分叉（fork 自 dsh-onebot-qq@0.11.0）：在 OneBot 11 / NapCat 通道基础上加了回合形式掷骰（语音条、表情包概率）、双发闸、引用的合并转发展开、正文气泡切分。仓库 github.com/InsaneGenji/dsh-onebot-genji，上游 github.com/mario841859784/dsh-onebot .",
   "keywords": [
     "dsh",
     "onebot",
@@ -40,11 +40,11 @@
   "license": "BSD-3-Clause",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mario841859784/dsh-onebot.git"
+    "url": "git+https://github.com/InsaneGenji/dsh-onebot-genji.git"
   },
-  "homepage": "https://github.com/mario841859784/dsh-onebot#readme",
+  "homepage": "https://github.com/InsaneGenji/dsh-onebot-genji#readme",
   "bugs": {
-    "url": "https://github.com/mario841859784/dsh-onebot/issues"
+    "url": "https://github.com/InsaneGenji/dsh-onebot-genji/issues"
   },
   "engines": {
     "dsh": ">=0.1.5-rc.1 <0.1.6-0 || >=0.1.6-alpha.1 <0.1.7-0 || >=0.1.7-alpha.1 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0 || >=0.2.1-0 <0.3.0-0 || >=0.2.2-0 <0.2.3-0",

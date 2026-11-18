@@ -65,7 +65,7 @@ declare const document: any;
  */
 
 window.__ModuleLoader__.load({
-	id: "dsh-onebot-qq",
+	id: "dsh-onebot-genji",
 	factory: (require: any) => {
 		var module: any = { exports: {} };
 		var exports = module.exports;
@@ -100,7 +100,7 @@ window.__ModuleLoader__.load({
 		//#endregion
 
 		//#region 常量
-		var PLUGIN_ID = "dsh-onebot-qq";
+		var PLUGIN_ID = "dsh-onebot-genji";
 		var REMOTE_NS = "onebotSettings"; // Typert Remote 命名空间（T1 §4，与 host 服务键一致）
 		var NS = "dsh-onebot"; // locale 命名空间
 		// T11：侧边栏入口与 main 面板共用 id（宿主 layout.selectPanel 按 main keyed
@@ -2358,7 +2358,7 @@ window.__ModuleLoader__.load({
 			if (remote === undefined) throw new Error("onebot-settings Remote 挂载后不可用");
 
 			ctx.slots.inject("plugins.bundle.config", function () { return ctx.slots.register(
-				{ name: "plugins.bundle.config", key: "dsh-onebot-qq", locale: NS },
+				{ name: "plugins.bundle.config", key: "dsh-onebot-genji", locale: NS },
 				function (props: any) { if (props && props.view === "summary") return t("settings.desc"); return React.createElement(OnebotSettingsPanel, Object.assign({}, props, { remote: remote })); },
 			); });
 

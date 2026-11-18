@@ -26,7 +26,7 @@
 # 绝对路径 name 不受锚定影响。）
 - insert:
   - id: dsh-onebot
-    name: 'dsh-onebot-qq'
+    name: 'dsh-onebot-genji'
     # config: { mode: reverse, host: 127.0.0.1, port: 8643, ... }
   - id: onebot-settings-remote
-    name: 'dsh-onebot-qq/settings-remote'
+    name: 'dsh-onebot-genji/settings-remote'
