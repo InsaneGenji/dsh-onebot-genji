@@ -177,7 +177,7 @@ export const SCHEMA_DEFAULTS: Readonly<Record<string, unknown>> = {
   sttArgs: [],
   sttModel: 'small',
   // PENDING：正文渲染文字图卡片开关（textImageThreshold 已翻转，开关键后批接上）。
-  textImageEnabled: true,
+  textImageEnabled: false,
   // T5 翻转：正文超 350 字符（原 150）渲染文字图卡片。
   textImageThreshold: 350,
   // T5 翻转：文字图卡片页脚品牌文字（原 'dsh'）。
