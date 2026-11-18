@@ -8,3 +8,4 @@ lib/*.bak-*
 
 .zcode/
 src/*.bak-*
+pnpm-lock.yaml
