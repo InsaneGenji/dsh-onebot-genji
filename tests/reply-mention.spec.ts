@@ -342,7 +342,7 @@ describe('wake-name gate (T1 PR port: 唤醒词)', () => {
     expect(h.emit).toHaveBeenCalledExactlyOnceWith('mention', {
       ok: true,
       reason: TRACE_REASONS.inboundWakeName,
-      data: { names: ['小雪'], textLen: expect.any(Number), preview: expect.any(String), role: 'member' },
+      data: { names: ['小雪'], textLen: expect.any(Number), preview: expect.any(String) },
     })
   })
 
@@ -353,15 +353,17 @@ describe('wake-name gate (T1 PR port: 唤醒词)', () => {
     expect(h.emit).toHaveBeenCalledExactlyOnceWith('mention', { ok: false, reason: TRACE_REASONS.inboundUnmentioned })
   })
 
-  it('picks the tier list: admin sender uses wakeNamesAdmin, member sender does not', async () => {
-    // The harness policy marks OTHER (10003) as the admin.
-    const h = makeHarness({ config: { wakeNamesAdmin: ['小雪'], wakeNamesMember: ['阿蜜'] } })
+  it('merges the two wake lists: a name in either list wakes anyone (2026-11-18 合并)', async () => {
+    // 用户唤醒词 / 他人唤醒词已在面板合并成一张「唤醒词」表，逻辑上两表并集生效：
+    // 不管发信人是管理员还是普通成员，命中任一张表都算叫到机器人。
+    const h = makeHarness({ config: { wakeNamesAdmin: ['小雪'] } })
     await runWithTrace(h.trace, () => h.pipeline.processInbound(inbound([wakeText])))
     expect(h.dispatchFollowup).toHaveBeenCalledTimes(1)
 
-    const h2 = makeHarness({ config: { wakeNamesAdmin: ['小雪'], wakeNamesMember: ['阿蜜'] } })
-    await runWithTrace(h2.trace, () => h2.pipeline.processInbound(inbound([{ type: 'text', data: { text: '小雪 在吗' } }], { user_id: Number(BOT) })))
-    expect(h2.dispatchFollowup).not.toHaveBeenCalled()
+    // 同一个成员发送者，只配 member 表也照样唤醒（旧逻辑这里不会命中）。
+    const h2 = makeHarness({ config: { wakeNamesMember: ['小雪'] } })
+    await runWithTrace(h2.trace, () => h2.pipeline.processInbound(inbound([wakeText])))
+    expect(h2.dispatchFollowup).toHaveBeenCalledTimes(1)
   })
 
   it('does not override an explicit @ (mentioned stays true, recheck skipped via wakeNameHit)', async () => {

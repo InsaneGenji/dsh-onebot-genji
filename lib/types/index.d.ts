@@ -264,6 +264,7 @@ export interface Config {
     dmPromptFile: string;
     /** T4 (PR port 提示词文件)：群聊（group:）会话的附加设定文件路径；空 = 不注入（默认）。 */
     groupPromptFile: string;
+    groupContextLines: number;
     /** T4 (PR port 记忆文件)：记忆文件开关（默认关；只喂私聊）。 */
     memoryFilesEnabled: boolean;
     /** T4 (PR port 记忆文件)：记忆文件路径列表。 */

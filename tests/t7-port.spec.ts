@@ -284,7 +284,7 @@ describe('T7 设置键：inboxQueueEnabled/inboxQueueDelayMs', () => {
   })
 
   it('behavior 组键序：deferredTimeoutMs 之后追加两键（0.10.0 重排后组尾再续 ignoreSelf/sidebarEntryEnabled）', () => {
-    expect(SETTINGS_GROUPS.behavior.slice(-4)).toEqual(['inboxQueueDelayMs', 'titleSyncEnabled', 'ignoreSelf', 'sidebarEntryEnabled'])
-    expect(SETTINGS_GROUPS.behavior.slice(-6, -4)).toEqual(['deferredTimeoutMs', 'inboxQueueEnabled'])
+    expect(SETTINGS_GROUPS.behavior.slice(-5)).toEqual(['inboxQueueEnabled', 'inboxQueueDelayMs', 'titleSyncEnabled', 'ignoreSelf', 'sidebarEntryEnabled'])
+    expect(SETTINGS_GROUPS.behavior.slice(-7, -5)).toEqual(['autoSteerPolicy', 'deferredTimeoutMs'])
   })
 })

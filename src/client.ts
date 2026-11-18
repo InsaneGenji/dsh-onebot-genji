@@ -135,7 +135,7 @@ window.__ModuleLoader__.load({
 				sections: [
 					{ id: "common", title: "通用", keys: ["adminUsers", "sensitivePatterns"] },
 					{ id: "dm", title: "私聊", keys: ["dmPolicy", "allowFrom"] },
-					{ id: "group", title: "群聊", keys: ["requireMention", "memberTools", "groupPolicy", "groupAllowFrom", "wakeNamesAdmin", "wakeNamesMember", "atAllCountsAsMention", "pokeEnabled"] },
+					{ id: "group", title: "群聊", keys: ["groupPolicy", "groupAllowFrom", "memberTools", "groupContextLines", "wakeNamesAdmin", "requireMention", "pokeEnabled", "atAllCountsAsMention"] },
 				],
 				fields: [
 					{ key: "requireMention", label: "群聊必须 @ 机器人", type: "boolean" },
@@ -145,10 +145,10 @@ window.__ModuleLoader__.load({
 					{ key: "groupPolicy", label: "群聊策略", type: "enum", options: ["open", "allowlist", "disabled"], optionLabels: { open: "开放", allowlist: "白名单", disabled: "禁用" } },
 					{ key: "allowFrom", label: "私聊白名单", showIf: { key: "dmPolicy", value: "allowlist" }, type: "stringArray" },
 					{ key: "groupAllowFrom", label: "群聊白名单", showIf: { key: "groupPolicy", value: "allowlist" }, type: "stringArray" },
-					{ key: "wakeNamesAdmin", label: "用户唤醒词", type: "stringArray" },
-					{ key: "wakeNamesMember", label: "他人唤醒词", type: "stringArray" },
+					{ key: "wakeNamesAdmin", label: "唤醒词", type: "stringArray", hint: "群里任何人说了这些词就当我被叫到" },
 					{ key: "atAllCountsAsMention", label: "@全体唤醒", type: "boolean", hint: "@全体成员也算叫我" },
 				{ key: "pokeEnabled", label: "戳一戳叫醒", type: "boolean" },
+				{ key: "groupContextLines", label: "参考上下文条数", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", hint: "被 @ 或叫到唤醒词时先带上群里最近这么多条消息；0 = 不参考" },
 					{ key: "sensitivePatterns", label: "出站敏感词正则", type: "stringArray", placeholder: "正则，一行一个；留空用内置" },
 				],
 			},
@@ -254,6 +254,7 @@ window.__ModuleLoader__.load({
 			forceSessionId: "",
 			dmPromptFile: "", // T4 拍板默认关（贡献者默认 ~/.dsh 路径不收）
 			groupPromptFile: "", // 同上
+			groupContextLines: 0, // 本地加（2026-11-18）：被 @ 时带上的群聊上下文条数
 			requireMention: true,
 			memberTools: "none",
 			bystanderEnabled: false,
@@ -465,6 +466,7 @@ window.__ModuleLoader__.load({
 			forceSessionId: vString(0, 256),
 			dmPromptFile: vString(0, 1024),
 			groupPromptFile: vString(0, 1024),
+			groupContextLines: vNumber(),
 			requireMention: vBoolean(),
 			memberTools: vEnum(["none", "send", "all"]),
 			bystanderEnabled: vBoolean(),
@@ -861,10 +863,10 @@ window.__ModuleLoader__.load({
 					allowAllUsers: { label: "Allow all users" },
 					allowFrom: { label: "DM allowlist" },
 					groupAllowFrom: { label: "Group allowlist" },
-					wakeNamesAdmin: { label: "User wake names" },
-					wakeNamesMember: { label: "Member wake names" },
+					wakeNamesAdmin: { label: "Wake names", hint: "Anyone in the group saying one of these counts as calling the bot" },
 					atAllCountsAsMention: { label: "@-all wakes", hint: "@-ing everyone also counts as a wake" },
 					pokeEnabled: { label: "Poke wakes" },
+					groupContextLines: { label: "Group context lines", hint: "Include the last N group messages when @-mentioned; 0 = off" },
 					sensitivePatterns: { label: "Outbound sensitive-word regexes", placeholder: "One regex per line; empty = built-in list" },
 				},
 			},
@@ -1192,6 +1194,7 @@ window.__ModuleLoader__.load({
 		 */
 		var NUMBER_RANGE: any = {
 			port: [1, 65535],
+			groupContextLines: [0, 200],
 			rateLimitPerMinute: [0, undefined],
 			interimRecallMs: [0, undefined],
 			inboxQueueDelayMs: [0, undefined],
@@ -1698,13 +1701,17 @@ window.__ModuleLoader__.load({
 				if (consumedMode === true) return null;
 				return node;
 			});
-			fieldNodes = fieldNodes.concat(noticeRows).concat(tailFieldNodes);
+			var extraNodes = noticeRows.concat(tailFieldNodes);
+			fieldNodes = fieldNodes.concat(extraNodes);
 			// 本地加：组内分区（如权限的私聊/群聊）——按 keys 顺序取已渲染的字段节点，
 			// 每块前面插一个小标题（标题走词条，zh 源 = GROUPS.sections.title 自动灌入）。
 			if (Array.isArray(group.sections) && group.sections.length > 0) {
 				var byKey: any = {};
+				// 本地改（2026-11-18）：sections 重排后 fieldNodes 长度已变（通知行/尾部字段
+				// 追加在后面），所以索引只按前 group.fields.length 项取。
 				group.fields.forEach(function (field: any, index: any) { byKey[field.key] = fieldNodes[index]; });
-				var sectioned = [];
+				var looseNodes = [];
+				var sectionNodes = [];
 				// 本地加：没归进任何分区的字段先渲染 —— 落在组标题下、第一个分区标题之上
 				//（如权限组的「管理员用户列表」）。
 				var claimedBySection: any = {};
@@ -1712,16 +1719,17 @@ window.__ModuleLoader__.load({
 					for (var claimKey of claimSection.keys) claimedBySection[claimKey] = true;
 				}
 				for (var looseField of group.fields) {
-					if (claimedBySection[looseField.key] !== true && byKey[looseField.key] != null) sectioned.push(byKey[looseField.key]);
+					if (claimedBySection[looseField.key] !== true && byKey[looseField.key] != null) looseNodes.push(byKey[looseField.key]);
 				}
 				for (var section of group.sections) {
-					sectioned.push(h(ReactImpl, "h4", { className: "obx-subgroup-title", key: "sec-" + section.id },
+					sectionNodes.push(h(ReactImpl, "h4", { className: "obx-subgroup-title", key: "sec-" + section.id },
 						tr("group." + group.id + ".section." + section.id, section.title)));
 					for (var sectionKey of section.keys) {
-						if (byKey[sectionKey] != null) sectioned.push(byKey[sectionKey]);
+						if (byKey[sectionKey] != null) sectionNodes.push(byKey[sectionKey]);
 					}
 				}
-				fieldNodes = sectioned;
+				// 本地改（2026-11-18）：分区块排在通知段之后、尾部字段（发送错误通知）之前。
+				fieldNodes = looseNodes.concat(noticeRows).concat(sectionNodes).concat(tailFieldNodes);
 			}
 			// 组标题 + 一句人话描述（经 opts.groupDesc 传入；缺省不渲染）。标题走词条
 			//（zh 源 = GROUPS.title 自动灌入）。

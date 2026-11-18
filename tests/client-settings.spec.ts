@@ -204,7 +204,7 @@ describe('T8 客户端 bundle — descriptor 契约核对（与宿主 src/settin
     expect(listWorkspaces.result.schema.parse({ available: false, workspaces: [] })).toEqual({ available: false, workspaces: [] })
   })
 
-  it('result codec 可解析宿主形态快照（78 键 config 含 notices/chatIdleEvictDays + secrets 脱敏标记 + groups + effect=restart）', () => {
+  it('result codec 可解析宿主形态快照（79 键 config 含 notices/chatIdleEvictDays + secrets 脱敏标记 + groups + effect=restart）', () => {
     const getSettings = descriptors[0] as { result: { schema: { parse(value: unknown): unknown } } }
     const snapshot = {
       revision: 3,
@@ -226,7 +226,7 @@ describe('T8 客户端 bundle — descriptor 契约核对（与宿主 src/settin
     expect(parsed.config).not.toHaveProperty('reactionOnMention')
     expect(parsed.config).not.toHaveProperty('reactionEmoji')
     expect(parsed.config.allowAllUsers).toBe(false) // 面板下架但 schema/codec 仍保留（老配置可读）
-    expect(Object.keys(parsed.config)).toHaveLength(78) // 77 DEFAULTS 键 + notices
+    expect(Object.keys(parsed.config)).toHaveLength(79) // 78 DEFAULTS 键 + notices
     expect(parsed.config.notices).toEqual(SCHEMA_DEFAULTS.notices)
   })
 
@@ -272,7 +272,8 @@ describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已
     connection: ['mode', 'host', 'port', 'url', 'accessToken', 'botQQ'],
     permissions: [
       'requireMention', 'memberTools', 'adminUsers', 'dmPolicy', 'groupPolicy', 'allowFrom',
-      'groupAllowFrom', 'wakeNamesAdmin', 'wakeNamesMember', 'atAllCountsAsMention', 'pokeEnabled', 'sensitivePatterns',
+      'groupAllowFrom', 'wakeNamesAdmin', 'atAllCountsAsMention', 'pokeEnabled',
+      'groupContextLines', 'sensitivePatterns',
     ],
     behavior: [
       'rateLimitPerMinute', 'unknownCommand', 'newMessagePolicy', 'autoSteerPolicy', 'inboxQueueEnabled',
@@ -358,9 +359,9 @@ describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已
     expect(defaults.bystanderTopics).toEqual([])
   })
 
-  it('默认值逐字对齐 host SCHEMA_DEFAULTS（77 键：62 面板键 + 下架键 + 旁观 5 键 + chatIdleEvictDays；notices 走面板 5 真键不在 DEFAULTS）', () => {
+  it('默认值逐字对齐 host SCHEMA_DEFAULTS（78 键：62 面板键 + 下架键 + 旁观 5 键 + chatIdleEvictDays；notices 走面板 5 真键不在 DEFAULTS）', () => {
     const hostDefaults = SCHEMA_DEFAULTS as Record<string, unknown>
-    expect(Object.keys(defaults)).toHaveLength(77) // 含下架键、旁观 5 键与 chatIdleEvictDays
+    expect(Object.keys(defaults)).toHaveLength(78) // 含下架键、旁观 5 键与 chatIdleEvictDays
     expect('notices' in defaults).toBe(false) // notices 由 NOTICE_KEYS 面板通道承载
     expect(defaults.chatIdleEvictDays).toBe(hostDefaults.chatIdleEvictDays) // 不上面板但参与徽标对照
     expect(defaults.sidebarEntryEnabled).toBe(true) // T11：侧边栏入口默认开（设置项已下架，行为恒开）
@@ -531,7 +532,7 @@ describe('T8 showIf 条件显隐 — 贡献者面板交互契约', () => {
     ])
     const rowsPerGroup = groups.map((group) => topFieldRows(renderGroup(group.id, {})).length)
     // connection 4（6-2 隐藏）/ permissions 10（12-2 隐藏）/ behavior 19（7 可见字段 + deferredTimeoutMs 挪进通知段 + 1 尾部发送错误通知 + 10 通知行）
-    // session 8（9-1 隐藏）/ media 13（17-4 隐藏）/ diagnostics 7（旁观组已整组下架，不再计行）
+    // session 9（10-1 隐藏）/ media 13（17-4 隐藏）/ diagnostics 7（旁观组已整组下架，不再计行）
     expect(rowsPerGroup).toEqual([4, 10, 19, 8, 13, 7])
     expect(rowsPerGroup.reduce((sum, count) => sum + count, 0)).toBe(61)
   })
@@ -554,14 +555,14 @@ describe('T8 showIf 条件显隐 — 贡献者面板交互契约', () => {
 })
 
 describe('T8 客户端 bundle — 渲染函数模块级可测（renderGroup 纯函数，ui 桩注入）', () => {
-  it('六组各产出标题与逐字段控件行；控件类型齐备（9 分段 + 6 多行文本 + 21 开关 + 5 通知开关 + 5 通知文案 + 14 文本输入 + 1 密码框 + 1 清除勾选）', () => {
+  it('六组各产出标题与逐字段控件行；控件类型齐备（9 分段 + 5 多行文本 + 21 开关 + 5 通知开关 + 5 通知文案 + 15 文本输入 + 1 密码框 + 1 清除勾选）', () => {
     const sections = groups.map((group) => renderGroup(group.id, {}))
     expect(sections.map((section) => section.props['data-group'])).toEqual(['connection', 'permissions', 'behavior', 'session', 'media', 'diagnostics'])
     const elements = sections.flatMap((section) => walk(section))
     expect(elements.filter((element) => element.type === stubUi.SegmentedControl)).toHaveLength(9) // 9 枚举全显（原生分段控件；faceStyle 已下架）
-    expect(elements.filter((element) => element.type === 'textarea')).toHaveLength(11) // 6 可见 stringArray + 5 通知文案（allowFrom/memoryFiles/sttArgs 默认被 showIf 隐藏不渲染）
+    expect(elements.filter((element) => element.type === 'textarea')).toHaveLength(10) // 5 可见 stringArray + 5 通知文案（allowFrom/memoryFiles/sttArgs 默认被 showIf 隐藏不渲染）
     const inputs = elements.filter((element) => element.type === stubUi.Input)
-    expect(inputs.filter((input) => input.props.type === 'text')).toHaveLength(14) // 7 可见 number + 7 可见 string（forward 档 url 显、host/port 隐）
+    expect(inputs.filter((input) => input.props.type === 'text')).toHaveLength(15) // 8 可见 number + 7 可见 string（forward 档 url 显、host/port 隐）
     expect(inputs.filter((input) => input.props.type === 'password')).toHaveLength(1)
     expect(elements.filter((element) => element.type === stubUi.Switch)).toHaveLength(26) // 21 布尔面板键 + 5 通知开关（恒显）
     expect(elements.filter((element) => element.type === stubUi.Checkbox)).toHaveLength(1) // 仅 secret 清除勾选
@@ -744,7 +745,7 @@ describe('T8 数字行内校验 — NUMBER_RANGE 对齐 host + numberRangeInvali
     raw: unknown,
   ) => string | null
 
-  it('NUMBER_RANGE 覆盖全部面板数字键（14 键，含 T7 inboxQueueDelayMs 与 #58 旁观三键；reactionEmoji/chatIdleEvictDays 不上面板不入表）', () => {
+  it('NUMBER_RANGE 覆盖全部面板数字键（15 键，含 T7 inboxQueueDelayMs 与 #58 旁观三键；reactionEmoji/chatIdleEvictDays 不上面板不入表）', () => {
     expect(NUMBER_RANGE).toStrictEqual({
       port: [1, 65535],
       rateLimitPerMinute: [0, undefined],
@@ -759,12 +760,13 @@ describe('T8 数字行内校验 — NUMBER_RANGE 对齐 host + numberRangeInvali
       inboundFileMaxBytes: [0, undefined],
       bystanderCapacity: [5, 500],
       bystanderCooldownMinutes: [5, 1440],
+      groupContextLines: [0, 200],
       bystanderDailyLimit: [1, 200],
     })
     // 键集 = 面板 11 个 number 字段 + 「旁观」整组下架后仍留在表里的 3 个数字键
     // （reactionEmoji/chatIdleEvictDays 不上面板也不入表）
     const panelNumberKeys = allFields.filter((field) => field.type === 'number').map((field) => field.key)
-    expect(panelNumberKeys).toHaveLength(11)
+    expect(panelNumberKeys).toHaveLength(12)
     expect([...Object.keys(NUMBER_RANGE)].sort()).toEqual(
       [...panelNumberKeys, 'bystanderCapacity', 'bystanderCooldownMinutes', 'bystanderDailyLimit'].sort(),
     )
@@ -997,7 +999,7 @@ describe('0.10.0 设置页样式 — dsw token 对齐（页骨架/发丝分隔/�
 describe('0.10.0 字段文案词典化 — 新键必须双词（zh 自动灌入 + EN 对照表护栏）', () => {
   const localeEn = client.LOCALE_EN as Record<string, unknown>
 
-  it('77 键 zh label 全部自动灌入且为中文（zh 源 = GROUPS 内联常量，无双源漂移）', () => {
+  it('78 键 zh label 全部自动灌入且为中文（zh 源 = GROUPS 内联常量，无双源漂移）', () => {
     for (const field of allFields) {
       const value = localeZh[`field.${field.key}.label`]
       expect(typeof value).toBe('string')

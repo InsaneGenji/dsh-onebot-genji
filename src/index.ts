@@ -256,6 +256,7 @@ export interface Config {
   dmPromptFile: string
   /** T4 (PR port 提示词文件)：群聊（group:）会话的附加设定文件路径；空 = 不注入（默认）。 */
   groupPromptFile: string
+  groupContextLines: number
   /** T4 (PR port 记忆文件)：记忆文件开关（默认关；只喂私聊）。 */
   memoryFilesEnabled: boolean
   /** T4 (PR port 记忆文件)：记忆文件路径列表。 */
@@ -496,6 +497,8 @@ export const Config: Z<Config> = z.object({
     .description('私聊附加设定文件路径（T4 PR 移植）：支持 ~/ 展开；文件内容（剥行首尾空白）注入私聊会话 system prompt 的「本会话附加设定」段，文件编辑后即时生效（mtime 缓存失效）；留空 = 不注入（默认）'),
   groupPromptFile: z.string().default('')
     .description('群聊附加设定文件路径（T4 PR 移植）：同 dmPromptFile，只对群聊（group:）会话生效；留空 = 不注入（默认）'),
+  groupContextLines: z.number().min(0).max(200).default(0)
+    .description('群聊参考上下文条数（本地加 2026-11-18）：被 @ 时把群里最近 N 条消息拼进上下文；0 = 不参考'),
   memoryFilesEnabled: z.boolean().default(false)
     .description('记忆文件开关（T4 PR 移植）：开启后把 memoryFiles 列表里的文件内容注入私聊会话 system prompt 的「我的记忆」段（单文件 8000 字符、总量 12000 字符截断；群聊不喂记忆）；默认关'),
   memoryFiles: z.array(z.string()).default([])
@@ -802,6 +805,7 @@ export function apply(ctx: Context, config: Config): void {
       startupResumeEnabled: config.startupResumeEnabled,
       dmPromptFile: config.dmPromptFile,
       groupPromptFile: config.groupPromptFile,
+      groupContextLines: config.groupContextLines,
       memoryFilesEnabled: config.memoryFilesEnabled,
       memoryFiles: config.memoryFiles,
       chatTailsEnabled: config.chatTailsEnabled,

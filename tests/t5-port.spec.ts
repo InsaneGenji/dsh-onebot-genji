@@ -41,8 +41,8 @@ describe('T5 键表完整性（SCHEMA_DEFAULTS 与 schema 无孤儿键）', () =
   it('六组结构（T8/T11/T24 增键 + 0.10.0 重排方案 A + #59 memberTools + T1 reaction + 11.18 allowAllUsers/旁观组下架）：connection 6 / permissions 17 / behavior 14 / session 11 / media 17 / diagnostics 7', () => {
     expect(Object.keys(SETTINGS_GROUPS)).toEqual(['connection', 'permissions', 'behavior', 'session', 'media', 'diagnostics'])
     expect(SETTINGS_GROUPS.connection).toHaveLength(6) // 0.10.0 重排：连接=通道配置（-8 键）
-    expect(SETTINGS_GROUPS.permissions).toHaveLength(17) // #59：+memberTools；T1 reaction：+reactionOnMention/reactionEmoji；2026-11-18：allowAllUsers 从面板摘掉 -1
-    expect(SETTINGS_GROUPS.behavior).toHaveLength(14) // T24：+titleSyncEnabled；0.10.0：+ignoreSelf/sidebarEntryEnabled
+    expect(SETTINGS_GROUPS.permissions).toHaveLength(18) // 本地加：+groupContextLines // #59：+memberTools；T1 reaction：+reactionOnMention/reactionEmoji；2026-11-18：allowAllUsers 从面板摘掉 -1
+    expect(SETTINGS_GROUPS.behavior).toHaveLength(14) // 本地加：+groupContextLines；T24：+titleSyncEnabled；0.10.0：+ignoreSelf/sidebarEntryEnabled
     // 2026-11-18：「旁观」整组退出组表（schema/DEFAULTS/ALL_KEYS 的 5 键保留，老配置照样能读）
     expect(SETTINGS_GROUPS).not.toHaveProperty('bystander')
     expect(SETTINGS_GROUPS.behavior).toEqual(expect.arrayContaining(['inboxQueueEnabled', 'inboxQueueDelayMs', 'titleSyncEnabled']))

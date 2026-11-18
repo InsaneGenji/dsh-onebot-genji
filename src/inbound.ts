@@ -318,10 +318,9 @@ export class InboundPipeline {
     // 置回 false。角色档取管理员/成员各自的唤醒词表。
     let wakeNameHit = false
     if (kind === 'group' && !mentioned) {
-      const role = classifyUserRole(userId, policy.adminUsers)
-      const wakeNames = role === 'admin'
-        ? this.ctx.config.wakeNamesAdmin ?? []
-        : this.ctx.config.wakeNamesMember ?? []
+      // 2026-11-18 本地改：用户唤醒词 / 他人唤醒词合并成一张「唤醒词」表，
+      // 群里任何人（不管是不是管理员）说了都算叫到我。
+      const wakeNames = [...(this.ctx.config.wakeNamesAdmin ?? []), ...(this.ctx.config.wakeNamesMember ?? [])]
       if (wakeNames.length > 0) {
         const text = segmentText(inbound.segments, inbound.raw)
         if (detectWakeName(text, wakeNames)) {
@@ -330,7 +329,7 @@ export class InboundPipeline {
           currentTrace()?.emit('mention', {
             ok: true,
             reason: TRACE_REASONS.inboundWakeName,
-            data: { names: [...wakeNames], textLen: text.length, preview: text.slice(0, 40), role },
+            data: { names: [...wakeNames], textLen: text.length, preview: text.slice(0, 40) },
           })
         }
       }

@@ -148,6 +148,8 @@ export interface BridgeConfig {
     dmPromptFile?: string;
     /** T4 (PR port 提示词文件)：群聊（group:）会话的附加设定文件路径；absent/空 = 不注入。 */
     groupPromptFile?: string;
+    /** 本地加（2026-11-18）：被 @ 时带上的群聊上下文条数（0/absent = 不参考，上限 200）。 */
+    groupContextLines?: number;
     /** T4 (PR port 记忆文件)：记忆文件开关（默认关，裁定口径）；只对私聊生效。 */
     memoryFilesEnabled?: boolean;
     /** T4 (PR port 记忆文件)：记忆文件路径列表（~/ 展开；单文件 8000 字符、
