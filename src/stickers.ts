@@ -343,6 +343,46 @@ export class StickerStore {
     return out
   }
 
+  /**
+   * 2026-11-19 主人反馈：未审核里出现「裂图」——索引里有条目、磁盘上文件却没了，
+   * 面板只知道读图失败，一直显示「…」。打开面板前先清一遍：文件不在就从索引里摘掉。
+   *
+   * @returns 被摘掉的 hash 列表（空表示索引是干净的）
+   */
+  pruneMissing(): string[] {
+    const known = Object.keys(this.index.items).length
+    const gone: string[] = []
+    for (const [hash, item] of Object.entries(this.index.items)) {
+      if (item == null || typeof item.hash !== 'string') {
+        delete this.index.items[hash]
+        gone.push(hash)
+        continue
+      }
+      let present = false
+      try {
+        present = statSync(this.pathOf(item)).isFile()
+      }
+      catch {
+        present = false
+      }
+      if (present)
+        continue
+      delete this.index.items[hash]
+      gone.push(item.hash)
+    }
+    // 2026-11-19 事故：库里 188 条一起被判「文件丢失」，索引被整个清空（图片其实还在）。
+    // 一次摘掉一半以上还不少于 10 条，说明不是个别文件丢失，而是目录本身读不到
+    // （盘符没挂、目录被挪、权限变动）。这种情况宁可留着让面板显示「文件丢失」。
+    if (gone.length >= 10 && gone.length * 2 > known && known > 0) {
+      this.ensure()
+      this.log('warn', `pruneMissing 跳过：${known} 条里有 ${gone.length} 条读不到文件，按库目录整体不可用处理，索引保持原样`)
+      return []
+    }
+    if (gone.length > 0)
+      this.save()
+    return gone
+  }
+
   stats(): StickerStats {
     const items = this.list()
     let approved = 0
@@ -366,7 +406,7 @@ export class StickerStore {
   }
 
   /** 落一张图进库；返回 { added, item }（同内容已存在时 added=false）。 */
-  addBuffer(buf: unknown, name: string, { approved = false }: { approved?: boolean } = {}): StickerAddResult {
+  addBuffer(buf: unknown, name: string, { approved = false, force = false }: { approved?: boolean, force?: boolean } = {}): StickerAddResult {
     if (!Buffer.isBuffer(buf) || buf.length === 0)
       return { added: false, reason: 'empty' }
     const mime = sniffImageMime(buf)
@@ -374,8 +414,11 @@ export class StickerStore {
       return { added: false, reason: 'not-image' }
     const hash = hashOf(buf)
     // 删过的图别再自动收回来（2026-11-19 主人报的 bug：删了又出现在未审核里）。
-    if (Array.isArray(this.index.deleted) && this.index.deleted.includes(hash))
+    // 但主人在面板上手动「新增」就是明确要把这张收回来，force 时先撤墓碑再入库。
+    if (!force && Array.isArray(this.index.deleted) && this.index.deleted.includes(hash))
       return { added: false, reason: 'deleted' }
+    if (force && Array.isArray(this.index.deleted) && this.index.deleted.includes(hash))
+      this.index.deleted = this.index.deleted.filter((one) => one !== hash)
     const exist = this.index.items[hash]
     if (exist != null) {
       // 已审核的图再次被收集：不动它，免得把审核状态打回未审核
@@ -405,7 +448,7 @@ export class StickerStore {
     return { added: true, item: this.itemView(item) }
   }
 
-  addFile(path: string, options?: { approved?: boolean }): StickerAddResult {
+  addFile(path: string, options?: { approved?: boolean, force?: boolean }): StickerAddResult {
     try {
       return this.addBuffer(readFileSync(path), basename(path), options)
     }
@@ -739,9 +782,31 @@ interface StickerTaggerHost {
   readonly [key: string]: unknown
 }
 
-/** 附件服务：存图 → 拿回附件引用。 */
+/** 从宿主 ctx 取一格服务：先走 ctx.get（cordis 正规入口，插件没 inject 也取得到），
+ *  再回落属性访问（测试替身 / 老宿主）。 */
+function hostService<T>(ctx: unknown, key: string): T | undefined {
+  if (ctx == null || typeof ctx !== 'object')
+    return undefined
+  const getter = (ctx as { get?: unknown }).get
+  if (typeof getter === 'function') {
+    try {
+      const value = (getter as (key: string) => unknown).call(ctx, key)
+      if (value !== undefined && value !== null)
+        return value as T
+    }
+    catch {
+      /* 取不到就当没有，走属性回落 */
+    }
+  }
+  const fallback = (ctx as Record<string, unknown>)[key]
+  return fallback === undefined || fallback === null ? undefined : fallback as T
+}
+
+/** 附件服务：存图 → 拿回附件引用。
+ *  宿主 AttachmentStore.saveImages 逐项要求 mediaType（缺了会被 validateImageBatch 以
+ *  UNSUPPORTED_IMAGE_TYPE 直接拒掉），data 是字节本身、不是 base64。 */
 interface StickerAttachments {
-  saveImages(input: ReadonlyArray<{ data: Buffer, name: string }>): Promise<unknown>
+  saveImages(input: ReadonlyArray<{ data: Buffer, mediaType: string, name: string }>): Promise<unknown>
 }
 
 /** 默认模型选择器。 */
@@ -758,13 +823,16 @@ interface StickerLlmCall {
   stream(input: unknown): AsyncIterable<unknown>
 }
 
-/** 宿主 LLM 服务（只声明用到的 prepareCall）。 */
+/** 宿主 LLM 服务（只声明用到的 prepareCall）。
+ *  宿主 LlmRuntime.prepareCall 是 async（要等 adapter 的 capability 查询），
+ *  漏了 await 拿到的是 Promise，消息里就没有 stream —— 2026-11-19 的
+ *  「call.stream(...) is not a function or its return value is not async iterable」就是它。 */
 interface StickerLlmService {
   prepareCall(
     input: { provider: string, model: string, maxTokens: number },
     signal?: AbortSignal,
     transform?: (controls: StickerLlmControls) => StickerLlmControls,
-  ): StickerLlmCall
+  ): StickerLlmCall | Promise<StickerLlmCall>
 }
 
 /** 组装后的内容块里本文件要读的形状。 */
@@ -804,17 +872,21 @@ export function makeStickerTagger(ctx: unknown, { log }: { log?: StickerLogFn } 
       buf = readFileSync(filePath)
     }
     catch {
+      logFn('warn', '表情包识别跳过：文件读不到 ' + filePath)
       return null
     }
-    if (buf.length === 0 || buf.length > 8 * 1024 * 1024)
+    if (buf.length === 0 || buf.length > 8 * 1024 * 1024) {
+      logFn('warn', '表情包识别跳过：字节数不合规 ' + buf.length + ' ' + filePath)
       return null
+    }
     const mime = sniffImageMime(buf)
-    if (mime == null || mime === 'image/bmp')
+    if (mime == null || mime === 'image/bmp') {
+      logFn('warn', '表情包识别跳过：认不出图片类型 ' + String(mime) + ' ' + filePath)
       return null // 附件服务只收 png/jpeg/webp/gif
-    const host = (ctx != null && typeof ctx === 'object' ? ctx : {}) as StickerTaggerHost
-    const attachments = host.attachments
-    const agentDefaultModel = host.agentDefaultModel
-    const llm = host.llm
+    }
+    const attachments = hostService<StickerAttachments>(ctx, 'attachments')
+    const agentDefaultModel = hostService<StickerDefaultModel>(ctx, 'agentDefaultModel')
+    const llm = hostService<StickerLlmService>(ctx, 'llm')
     if (attachments == null || llm == null || agentDefaultModel == null) {
       logFn('debug', '表情包识别跳过：宿主缺 attachments/llm/agentDefaultModel')
       return null
@@ -830,21 +902,23 @@ export function makeStickerTagger(ctx: unknown, { log }: { log?: StickerLogFn } 
     }
     let refs: unknown
     try {
-      refs = await attachments.saveImages([{ data: buf, name: basename(filePath) }])
+      refs = await attachments.saveImages([{ data: buf, mediaType: mime, name: basename(filePath) }])
     }
     catch (error) {
       logFn('warn', '表情包识别：图片入库失败 ' + errorText(error))
       return null
     }
     const ref = isUnknownArray(refs) ? refs[0] : null
-    if (ref == null)
+    if (ref == null) {
+      logFn('warn', '表情包识别跳过：附件入库没有返回引用 ' + filePath)
       return null
+    }
     const selection = agentDefaultModel.currentSelection()
     const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
       ? AbortSignal.timeout(90_000)
       : undefined
     try {
-      const call = llm.prepareCall({
+      const call = await llm.prepareCall({
         provider: selection.provider,
         model: selection.model,
         maxTokens: 600,
@@ -866,7 +940,12 @@ export function makeStickerTagger(ctx: unknown, { log }: { log?: StickerLogFn } 
         assembler.push(chunk)
       const blocks = assembler.blocks()
       const text = blocks.filter((b): b is StickerTextBlock => b != null && b.type === 'text').map((b) => String(b.text ?? '')).join('').trim()
-      return parseTaggingReply(text)
+      const parsed = parseTaggingReply(text)
+      // 2026-11-19：解析失败以前是静默 null，面板只看到 no-result、日志里啥也没有。
+      // 现在把模型原文写进日志（前 400 字），下次一眼能看出是拒答、纯文本还是格式跑偏。
+      if (parsed == null)
+        logFn('warn', '表情包识别：模型没给出可解析的 JSON（原文 ' + text.length + ' 字）: ' + text.slice(0, 400))
+      return parsed
     }
     catch (error) {
       logFn('warn', '表情包识别失败: ' + errorText(error))

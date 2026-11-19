@@ -19,8 +19,8 @@ import { makeCmdHarness, outboundTextJoined, settleOutbound } from './helpers/br
 vi.setConfig({ testTimeout: 60_000 })
 
 describe('commands', () => {
-  it('packageVersion resolves 0.14.0 under ESM (no "?")', () => {
-    expect(packageVersion()).toBe('0.14.0')
+  it('packageVersion resolves 0.15.0 under ESM (no "?")', () => {
+    expect(packageVersion()).toBe('0.15.0')
   })
 
   it('routes slash commands before the model: /new opens a fresh session', async () => {

@@ -997,10 +997,10 @@ describe('T8 失败守卫 — host edit-failed 中文错误可渲染且不误判
 })
 
 describe('0.10.0 设置页样式 — dsw token 对齐（页骨架/发丝分隔/布局分支收敛）', () => {
-  it('面板容器：960px 居中内容列（宿主原生页口径），token 引用宿主 --dsw-*', () => {
+  it('面板容器：1100px 居中内容列（宿主原生页口径），token 引用宿主 --dsw-*', () => {
     const rule = CLIENT_SOURCE.match(/\.obx-panel\{[^}]*\}/)
     expect(rule).not.toBeNull()
-    expect(rule![0]).toContain('max-width:960px')
+    expect(rule![0]).toContain('max-width:1100px')
     expect(rule![0]).toContain('margin-inline:auto')
     expect(rule![0]).toContain('var(--dsw-alias-label-primary')
     expect(rule![0]).toContain('var(--dsw-radius-md,12px)')

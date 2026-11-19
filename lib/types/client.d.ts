@@ -109,6 +109,10 @@ interface StickerPanelEvent {
     /** 2026-11-19：编辑框改成多行 textarea 后，靠 Ctrl/⌘+Enter 保存。 */
     ctrlKey?: boolean;
     metaKey?: boolean;
+    /** 2026-11-19：「新增」弹不出选择器时的备用通道——把图片拖进面板。 */
+    dataTransfer?: {
+        files?: ArrayLike<unknown> | null;
+    } | null;
     preventDefault(): void;
     stopPropagation(): void;
 }

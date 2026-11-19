@@ -140,13 +140,22 @@ export declare class StickerStore {
     pathOf(item: StickerRecord): string;
     /** 面板列表用：把记录整理成平面数组（不读图片字节）。 */
     list(): StickerItemView[];
+    /**
+     * 2026-11-19 主人反馈：未审核里出现「裂图」——索引里有条目、磁盘上文件却没了，
+     * 面板只知道读图失败，一直显示「…」。打开面板前先清一遍：文件不在就从索引里摘掉。
+     *
+     * @returns 被摘掉的 hash 列表（空表示索引是干净的）
+     */
+    pruneMissing(): string[];
     stats(): StickerStats;
     /** 落一张图进库；返回 { added, item }（同内容已存在时 added=false）。 */
-    addBuffer(buf: unknown, name: string, { approved }?: {
+    addBuffer(buf: unknown, name: string, { approved, force }?: {
         approved?: boolean;
+        force?: boolean;
     }): StickerAddResult;
     addFile(path: string, options?: {
         approved?: boolean;
+        force?: boolean;
     }): StickerAddResult;
     itemView(item: StickerRecord): StickerItemView;
     /** 读一帧给面板做缩略图：返回 data URL（超过 maxBytes 直接放弃，别把面板撑爆）。 */
