@@ -12,3 +12,5 @@ stickers/
 .zcode/
 src/*.bak-*
 pnpm-lock.yaml
+
+_tlogs/

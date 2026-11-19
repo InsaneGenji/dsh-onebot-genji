@@ -533,6 +533,8 @@ describe('ChatBridge', () => {
   }, 30_000)
 
   it('golden: group @mention with a tool call yields interim → summary card → recall → final in order (M2-T0 golden)', async () => {
+    // 2026-11-19: 回合形式掷骰会往 followup 尾部追加提示段，钉住随机数让骰子落空。
+    vi.spyOn(Math, 'random').mockReturnValue(0.99)
     const h = await makeCmdHarness({ interimRecallMs: 60_000 })
     h.sendGroupTextAs('帮我查一下', 10001)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
@@ -572,6 +574,7 @@ describe('ChatBridge', () => {
     const finalFrame = frames[finalIdx] as { params: { message: Array<{ type: string; data: { text?: string } }> } }
     expect(finalFrame.params.message).toEqual([{ type: 'text', data: { text: '查到了，结论如下' } }])
     expect(frames.some(f => f.action === 'send_forward_msg' || f.action === 'send_private_forward_msg')).toBe(false)
+    vi.restoreAllMocks()
     h.client.close()
     await h.bridge.stop()
     await h.connection.stop()

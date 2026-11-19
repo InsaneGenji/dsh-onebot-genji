@@ -1,29 +1,18 @@
 /**
- * STT non-blocking tests (M3-D4c): a voice message dispatches the [语音]
- * placeholder immediately while the transcription runs in the background; the
- * completed transcript is steered into the chat's agent (running turn's next
- * step boundary, or a new turn when idle). Failure/timeout and an empty
- * transcript keep the placeholder as the final state — nothing is appended.
- * @module dsh-onebot/tests/stt-nonblocking
+ * Voice transcription is waited on before dispatch (2026-11-19):
+ * a voice message must produce exactly ONE turn. The transcript is inlined
+ * into the body when it arrives within VOICE_TRANSCRIBE_WAIT_MS; a timeout or
+ * failure falls back to the `[语音]` placeholder and the late result is
+ * dropped — it must never steer into a second turn.
+ * @module dsh-onebot/tests/stt-single-turn
  */
 import { describe, expect, it, vi } from 'vitest'
 
-import { InboundPipeline } from '../src/inbound.js'
+import { InboundPipeline, VOICE_TRANSCRIBE_WAIT_MS } from '../src/inbound.js'
 import type { InboundContext } from '../src/inbound.js'
 import type { ChatId } from '../src/chat.js'
 
 import { makeHarness } from './helpers/bridge-harness.js'
-
-/** A controllable one-shot promise. */
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
-  let resolve!: (value: T) => void
-  let reject!: (error: unknown) => void
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  return { promise, resolve, reject }
-}
 
 /** Minimal pipeline context for direct resolveMediaRef tests (voice path). */
 function makePipelineCtx(transcribe: (path: string) => Promise<string>, steers: Array<{ chatId: ChatId; text: string }>, logs: string[]): InboundContext {
@@ -45,59 +34,67 @@ function makePipelineCtx(transcribe: (path: string) => Promise<string>, steers: 
   } as never
 }
 
-describe('STT non-blocking (M3-D4c)', () => {
-  it('returns the [语音] placeholder immediately and steers the transcript when ready', async () => {
-    const slow = deferred<string>()
+describe('voice transcription before dispatch', () => {
+  it('inlines the transcript and never steers (one turn per voice message)', async () => {
     const steers: Array<{ chatId: ChatId; text: string }> = []
-    const transcribe = vi.fn(() => slow.promise)
+    const transcribe = vi.fn(async () => '好了')
     const pipeline = new InboundPipeline(makePipelineCtx(transcribe, steers, []))
 
-    // The annotation resolves while the transcription is still pending.
     const annotation = await pipeline.resolveMediaRef({ kind: 'voice', url: 'https://x/v.mp3' }, 'private:10001')
-    expect(annotation).toBe('[语音]')
+    expect(annotation).toBe('（语音转写：好了）')
     expect(transcribe).toHaveBeenCalledTimes(1)
+    // No steer: the transcript rode the same turn's body.
     expect(steers).toEqual([])
-
-    // Completing the transcription appends it as a steer into the same chat.
-    slow.resolve('好了')
-    await vi.waitFor(() => expect(steers).toEqual([{ chatId: 'private:10001', text: '好了' }]))
   })
 
-  it('keeps the placeholder as final when the transcription fails (no steer)', async () => {
-    const failing = deferred<string>()
+  it('falls back to the [语音] placeholder when the transcription fails', async () => {
     const steers: Array<{ chatId: ChatId; text: string }> = []
     const logs: string[] = []
-    const pipeline = new InboundPipeline(makePipelineCtx(() => failing.promise, steers, logs))
+    const pipeline = new InboundPipeline(makePipelineCtx(() => Promise.reject(new Error('boom')), steers, logs))
 
     const annotation = await pipeline.resolveMediaRef({ kind: 'voice', url: 'https://x/v.mp3' }, 'private:10001')
     expect(annotation).toBe('[语音]')
-
-    failing.reject(new Error('STT command timed out after 60000ms'))
-    await new Promise(resolve => setTimeout(resolve, 20))
     expect(steers).toEqual([])
     expect(logs.some(line => line.startsWith('warn: STT failed'))).toBe(true)
   })
 
-  it('does not steer an empty transcript (silence keeps the placeholder)', async () => {
-    const silent = deferred<string>()
+  it('falls back to the placeholder on an empty transcript (silence)', async () => {
     const steers: Array<{ chatId: ChatId; text: string }> = []
-    const pipeline = new InboundPipeline(makePipelineCtx(() => silent.promise, steers, []))
+    const pipeline = new InboundPipeline(makePipelineCtx(async () => '', steers, []))
 
     const annotation = await pipeline.resolveMediaRef({ kind: 'voice', url: 'https://x/v.mp3' }, 'private:10001')
     expect(annotation).toBe('[语音]')
-
-    silent.resolve('')
-    await new Promise(resolve => setTimeout(resolve, 20))
     expect(steers).toEqual([])
   })
 
-  it('runs the full pipeline non-blocking: placeholder dispatches first, transcript steers after', async () => {
-    const slow = deferred<string>()
-    const steers: Array<{ text: string; sessionId: string }> = []
+  it('gives up after the wait budget and drops the late result', async () => {
+    vi.useFakeTimers()
+    try {
+      const steers: Array<{ chatId: ChatId; text: string }> = []
+      const logs: string[] = []
+      let settle: (text: string) => void = () => undefined
+      const slow = new Promise<string>(resolve => { settle = resolve })
+      const pipeline = new InboundPipeline(makePipelineCtx(() => slow, steers, logs))
+
+      const pending = pipeline.resolveMediaRef({ kind: 'voice', url: 'https://x/v.mp3' }, 'private:10001')
+      await vi.advanceTimersByTimeAsync(VOICE_TRANSCRIBE_WAIT_MS + 10)
+      expect(await pending).toBe('[语音]')
+      expect(logs.some(line => line.includes('语音转写超时'))).toBe(true)
+
+      // The transcript arriving afterwards changes nothing: no second turn.
+      settle('来晚了')
+      await vi.advanceTimersByTimeAsync(10)
+      expect(steers).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('full pipeline: exactly one followup carrying the transcript, no steer', async () => {
     const h = await makeHarness({
-      transcriber: { enabled: true, transcribe: vi.fn(() => slow.promise) } as never,
+      transcriber: { enabled: true, transcribe: vi.fn(async () => '好了') } as never,
     })
-    h.captured.steers = steers
+    h.captured.steers = []
     const voiceBase64 = Buffer.from('fake-mp3-bytes').toString('base64')
     h.client.send(JSON.stringify({
       post_type: 'message', message_type: 'private', user_id: 10001, self_id: 10002,
@@ -105,25 +102,21 @@ describe('STT non-blocking (M3-D4c)', () => {
       raw_message: '[CQ:record,file=base64://...]',
       sender: { user_id: 10001, nickname: '小明' },
     }))
-    // The placeholder reaches the agent while the transcription is still pending.
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
-    expect(h.captured.followups[0].text).toContain('[语音]')
-    expect(h.captured.followups[0].text).not.toContain('语音转写')
-    expect(steers).toEqual([])
-
-    // Completing STT appends the labeled transcript via agent.steer.
-    slow.resolve('好了')
-    await vi.waitFor(() => expect(steers).toHaveLength(1))
-    expect(steers[0]).toEqual({ text: '（语音转写：好了）', sessionId: h.sessionIds[0] })
+    expect(h.captured.followups[0].text).toContain('（语音转写：好了）')
+    expect(h.captured.followups[0].text).not.toContain('[语音]')
+    // Give any (wrong) steering a chance to fire before asserting.
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(h.captured.steers).toEqual([])
+    expect(h.captured.followups).toHaveLength(1)
     h.client.close()
     await h.bridge.stop()
     await h.connection.stop()
   })
 
-  it('never appends on a failing transcription in the full pipeline', async () => {
-    const failing = deferred<string>()
+  it('full pipeline: a failing transcription keeps [语音] and stays at one turn', async () => {
     const h = await makeHarness({
-      transcriber: { enabled: true, transcribe: vi.fn(() => failing.promise) } as never,
+      transcriber: { enabled: true, transcribe: vi.fn(async () => { throw new Error('boom') }) } as never,
     })
     h.captured.steers = []
     h.client.send(JSON.stringify({
@@ -133,10 +126,10 @@ describe('STT non-blocking (M3-D4c)', () => {
       sender: { user_id: 10001, nickname: '小明' },
     }))
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
-    failing.reject(new Error('boom'))
-    await new Promise(resolve => setTimeout(resolve, 20))
-    expect(h.captured.followups).toHaveLength(1)
+    expect(h.captured.followups[0].text).toContain('[语音]')
+    await new Promise(resolve => setTimeout(resolve, 50))
     expect(h.captured.steers).toEqual([])
+    expect(h.captured.followups).toHaveLength(1)
     h.client.close()
     await h.bridge.stop()
     await h.connection.stop()

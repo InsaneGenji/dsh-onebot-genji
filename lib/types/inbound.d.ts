@@ -188,6 +188,9 @@ export interface InboundContext {
 /** W2-②: default (chatId, message_id) dedup window, aligned with the MIT
  * competitor's dedupWindowSeconds (300s). */
 export declare const DEFAULT_DEDUP_WINDOW_SECONDS = 300;
+/** 2026-11-19：语音转写在派发前最多等这么久（毫秒）。等不到就按 `[语音]`
+ * 派发并把晚到的结果丢掉 —— 一条语音只准产生一轮。 */
+export declare const VOICE_TRANSCRIBE_WAIT_MS = 8000;
 /** W2-②: max entries kept in the dedup window map (LRU-evicted beyond this)
  * so a flood of distinct message_ids cannot grow memory unbounded. */
 export declare const DEDUP_MAX_ENTRIES = 4096;
@@ -239,10 +242,11 @@ export declare class InboundPipeline {
     buildBody(text: string, media: MediaRef[], chatId: ChatId): Promise<string>;
     /** Resolve one media ref to a text annotation with a local path. */
     resolveMediaRef(ref: MediaRef, chatId: ChatId): Promise<string>;
-    /** M3-D4c: transcribe in the background and deliver the labeled transcript
-     * into the chat's turn (steer at the running turn's nearest step boundary,
-     * or a new turn when the agent is idle). Failure keeps [语音] as final. */
-    private transcribeLater;
+    /** 2026-11-19：转写改成在派发前同步等（最多等 VOICE_TRANSCRIBE_WAIT_MS）。
+     * 返回『（语音转写：…）』标签，失败/超时/空结果返回 '' —— 调用方退回
+     * `[语音]` 占位符。超时后即使转写稍后完成也不再做任何事，所以一条语音
+     * 永远只产生一轮。 */
+    private transcribeInline;
     /**
      * Expand a quote through get_msg, or reuse its already verified response.
      * @param messageId - quoted OneBot message id.

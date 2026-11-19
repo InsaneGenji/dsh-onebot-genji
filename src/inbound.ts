@@ -237,6 +237,9 @@ export interface InboundContext {
 /** W2-②: default (chatId, message_id) dedup window, aligned with the MIT
  * competitor's dedupWindowSeconds (300s). */
 export const DEFAULT_DEDUP_WINDOW_SECONDS = 300
+/** 2026-11-19：语音转写在派发前最多等这么久（毫秒）。等不到就按 `[语音]`
+ * 派发并把晚到的结果丢掉 —— 一条语音只准产生一轮。 */
+export const VOICE_TRANSCRIBE_WAIT_MS = 8_000
 /** W2-②: max entries kept in the dedup window map (LRU-evicted beyond this)
  * so a flood of distinct message_ids cannot grow memory unbounded. */
 export const DEDUP_MAX_ENTRIES = 4096
@@ -654,13 +657,14 @@ export class InboundPipeline {
         return (ref.stickerLabel !== undefined ? '[表情包:' : '[图片:') + resolved.path + ']'
           + await gifFramesNote(resolved.path, this.ctx.config.gifFramesEnabled === true)
       case 'voice': {
-        // M3-D4c: dispatch must not wait on STT — the [语音] placeholder ships
-        // now and the transcript steers into the turn when it completes. A
-        // failure/timeout keeps the placeholder as the final state.
-        if (this.ctx.transcriber.enabled) {
-          void this.transcribeLater(resolved.path, chatId)
-        }
-        return '[语音]'
+        // 2026-11-19 改：转写等在这里，派发前就把它拼进正文。原来的做法是
+        // 先派发 [语音] 占位符、转写完成后 steer 进会话 —— 当占位符那一轮
+        // 已经结束时，steer 会**另开一轮**，一条语音变成两次执行。
+        // 现在只有一条路：等到（或超时）再派发，超时就退回 [语音] 且
+        // 丢掉晚到的转写，绝不再补一次 steer。
+        if (!this.ctx.transcriber.enabled) return '[语音]'
+        const label = await this.transcribeInline(resolved.path)
+        return label === '' ? '[语音]' : label
       }
       case 'video':
         return '[视频:' + resolved.path + ']'
@@ -669,21 +673,30 @@ export class InboundPipeline {
     }
   }
 
-  /** M3-D4c: transcribe in the background and deliver the labeled transcript
-   * into the chat's turn (steer at the running turn's nearest step boundary,
-   * or a new turn when the agent is idle). Failure keeps [语音] as final. */
-  private async transcribeLater(path: string, chatId: ChatId): Promise<void> {
+  /** 2026-11-19：转写改成在派发前同步等（最多等 VOICE_TRANSCRIBE_WAIT_MS）。
+   * 返回『（语音转写：…）』标签，失败/超时/空结果返回 '' —— 调用方退回
+   * `[语音]` 占位符。超时后即使转写稍后完成也不再做任何事，所以一条语音
+   * 永远只产生一轮。 */
+  private async transcribeInline(path: string): Promise<string> {
     try {
-      const text = await this.ctx.transcriber.transcribe(path)
-      if (transcriptLabel(text) === '') {
+      const text = await withTimeout(this.ctx.transcriber.transcribe(path), VOICE_TRANSCRIBE_WAIT_MS)
+      if (text === undefined) {
+        this.ctx.log('warn', '语音转写超时，按占位符派发: ' + path)
+        currentTrace()?.emit('transcribe', { ok: false, reason: TRACE_REASONS.sttTimeout })
+        return ''
+      }
+      const label = transcriptLabel(text)
+      if (label === '') {
         this.ctx.log('debug', '语音转写结果为空: ' + path)
         currentTrace()?.emit('transcribe', { ok: false, reason: TRACE_REASONS.sttEmpty })
-        return
+        return ''
       }
-      this.ctx.steerTranscript(chatId, text)
+      currentTrace()?.emit('transcribe', { ok: true })
+      return label
     } catch (error) {
       this.ctx.log('warn', 'STT failed: ' + describeError(error))
       currentTrace()?.emit('transcribe', { ok: false, reason: '语音转写失败: ' + describeError(error) })
+      return ''
     }
   }
 
@@ -924,6 +937,21 @@ function numericReplyId(messageId: string): number | undefined {
   if (raw.trim() !== raw || !/^-?\d+$/.test(raw)) return undefined
   const value = Number(raw)
   return Number.isSafeInteger(value) ? value : undefined
+}
+
+/**
+ * 2026-11-19：等一个 Promise，超过 `ms` 就返回 undefined（原 Promise 继续
+ * 跑，但结果被丢弃 —— 语音转写就是这么用的：宁可退回 `[语音]`，也不要
+ * 晚到的转写另开一轮）。
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  return new Promise<T | undefined>((resolve, reject) => {
+    const timer = setTimeout(() => resolve(undefined), ms)
+    promise.then(
+      value => { clearTimeout(timer); resolve(value) },
+      error => { clearTimeout(timer); reject(error) },
+    )
+  })
 }
 
 /** The placeholder a media ref contributes to the parsed text. */
