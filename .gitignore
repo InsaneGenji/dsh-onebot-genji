@@ -5,6 +5,9 @@ media/
 profiles/
 .expert-bus/
 lib/*.bak-*
+# 表情包库默认放在 ~/.dsh/dsh-onebot-genji/stickers，这里只是兜底：别把图库提交进来
+stickers/
+.thumbs/
 
 .zcode/
 src/*.bak-*

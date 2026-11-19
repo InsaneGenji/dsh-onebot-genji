@@ -111,7 +111,7 @@ export const SCHEMA_DEFAULTS: Readonly<Record<string, unknown>> = {
   dmPromptFile: '',
   groupPromptFile: '',
   // 本地加（2026-11-18）：被 @ 时带上的群聊上下文条数（schema 默认 0）。
-  groupContextLines: 0,
+  groupContextLines: 3,
   // T5 翻转：下载 SSRF 防护逃生门（原 false）。
   allowPrivateHosts: true,
   ignoreSelf: true,

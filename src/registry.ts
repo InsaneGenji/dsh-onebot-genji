@@ -59,6 +59,17 @@ export interface SwitchableSession {
 /** Per-chat cap of the switchable list (hard-wired; no config surface). */
 const SWITCHABLE_CAP = 20
 
+/** 本地加（2026-11-19）：恢复会话失败时的重试间隔（毫秒）。插件热重载/重启
+ * 那一下，旧 agent 可能还在优雅收尾（dispose 要等当前 step 跑完），此时
+ * resume 会失败；以前直接 retire + 新建，一个聊天就分家成两个会话
+ * （2026-11-19 01:13 事故）。现在先按这几个间隔重试，全失败才走原流程。
+ * 总等待 ≈ 5.2 秒，最坏情况下用户那条消息晚响应这么久。 */
+const RESUME_RETRY_DELAYS_MS = [700, 1500, 3000]
+
+/** 这些错误重试也没用（日志不存在/结构坏了），直接放弃重试。 */
+const RESUME_RETRY_SKIP = /ENOENT|not found|not persisted|does not exist|corrupt|unparsable|invalid session/i
+
+
 /** The outcome of a /session switch attempt (the command layer phrases the
  * user-facing reply from `reason`; `message` carries the resume error text). */
 export type SessionSwitchOutcome =
@@ -230,6 +241,9 @@ export interface RegistryDeps {
   log(level: 'info' | 'warn' | 'error' | 'debug', message: string): void
   /** Bridge stop flag (guards the resume loop). */
   isStopping(): boolean
+  /** 本地加（2026-11-19）：恢复会话失败时的重试间隔（毫秒）覆盖；缺省用
+   * RESUME_RETRY_DELAYS_MS。测试传短间隔，生产不传。 */
+  resumeRetryDelaysMs?: readonly number[]
   /** Bridge-owned chat runtime teardown when a chat leaves the registry:
    * stop the typing indicator. Interim recall timers are cleared by the
    * registry itself (ChatAgent state), keeping the reset/heal semantics
@@ -485,7 +499,7 @@ export class ChatRegistry {
         this.evictedChats.delete(chatId)
       } else {
         try {
-          const resumed = await this.resumeChat(chatId, evicted.session)
+          const resumed = await this.resumeChatWithWait(chatId, evicted.session)
           // D4b/T3: the evicted chat's persisted mode/goal/workspace come back with it.
           this.restoreEvictedSettings(chatId, evicted)
           this.evictedChats.delete(chatId)
@@ -808,6 +822,30 @@ export class ChatRegistry {
     this.chats.set(chatId, chat)
     this.bySession.set(handle.agent.session.id, chatId)
     return chat
+  }
+
+  /** 本地加（2026-11-19）：带等待的 resume。恢复失败时先等旧 agent 释放
+   * （热重载瞬间它可能正跑着一轮），按 RESUME_RETRY_DELAYS_MS 重试；只有全
+   * 都失败才把错误抛给调用方走退休流程。遇到 RESUME_RETRY_SKIP 里的错误
+   * （日志没了/坏了）不浪费时间去重试。 */
+  private async resumeChatWithWait(chatId: ChatId, sessionId: string): Promise<ChatAgent> {
+    const delays = this.deps.resumeRetryDelaysMs ?? RESUME_RETRY_DELAYS_MS
+    let lastError: unknown
+    for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+      if (this.deps.isStopping()) throw new Error('bridge is stopping')
+      try {
+        const chat = await this.resumeChat(chatId, sessionId)
+        if (attempt > 0) this.deps.log('info', 'resume recovered after ' + attempt + ' retr(ies) for ' + chatId + ' @ ' + sessionId)
+        return chat
+      } catch (error) {
+        lastError = error
+        const message = describeError(error)
+        if (attempt >= delays.length || RESUME_RETRY_SKIP.test(message)) break
+        this.deps.log('warn', 'resume failed for ' + chatId + ' @ ' + sessionId + ' (retry ' + (attempt + 1) + '/' + delays.length + ' in ' + delays[attempt] + 'ms): ' + message)
+        await new Promise<void>((resolve) => { setTimeout(resolve, delays[attempt]) })
+      }
+    }
+    throw lastError
   }
 
   private mappingPath(): string {

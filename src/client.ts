@@ -254,7 +254,7 @@ window.__ModuleLoader__.load({
 			forceSessionId: "",
 			dmPromptFile: "", // T4 拍板默认关（贡献者默认 ~/.dsh 路径不收）
 			groupPromptFile: "", // 同上
-			groupContextLines: 0, // 本地加（2026-11-18）：被 @ 时带上的群聊上下文条数
+			groupContextLines: 3, // 本地加（2026-11-18）：被 @ 时带上的群聊上下文条数；默认 3
 			requireMention: true,
 			memberTools: "none",
 			bystanderEnabled: false,

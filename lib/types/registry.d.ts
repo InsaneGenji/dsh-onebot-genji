@@ -168,6 +168,9 @@ export interface RegistryDeps {
     log(level: 'info' | 'warn' | 'error' | 'debug', message: string): void;
     /** Bridge stop flag (guards the resume loop). */
     isStopping(): boolean;
+    /** 本地加（2026-11-19）：恢复会话失败时的重试间隔（毫秒）覆盖；缺省用
+     * RESUME_RETRY_DELAYS_MS。测试传短间隔，生产不传。 */
+    resumeRetryDelaysMs?: readonly number[];
     /** Bridge-owned chat runtime teardown when a chat leaves the registry:
      * stop the typing indicator. Interim recall timers are cleared by the
      * registry itself (ChatAgent state), keeping the reset/heal semantics
@@ -289,6 +292,11 @@ export declare class ChatRegistry {
     /** Resume one persisted chat from its recorded session id (shared by
      * loadMapping and the B8c evicted-chat resume). */
     private resumeChat;
+    /** 本地加（2026-11-19）：带等待的 resume。恢复失败时先等旧 agent 释放
+     * （热重载瞬间它可能正跑着一轮），按 RESUME_RETRY_DELAYS_MS 重试；只有全
+     * 都失败才把错误抛给调用方走退休流程。遇到 RESUME_RETRY_SKIP 里的错误
+     * （日志没了/坏了）不浪费时间去重试。 */
+    private resumeChatWithWait;
     private mappingPath;
     /** T3 (hole C): make a just-set /workspace override durable even when the
      * chat is not live (before its first message, or after a failed resume).

@@ -1,6 +1,6 @@
 {
   "name": "dsh-onebot-genji",
-  "version": "0.12.2",
+  "version": "0.13.0",
   "description": "由 InsaneGenji 维护的 QQ 通道分叉（fork 自 dsh-onebot-qq@0.11.0）：在 OneBot 11 / NapCat 通道基础上加了回合形式掷骰（语音条、表情包概率）、双发闸、引用的合并转发展开、正文气泡切分。仓库 github.com/InsaneGenji/dsh-onebot-genji，上游 github.com/mario841859784/dsh-onebot .",
   "keywords": [
     "dsh",
