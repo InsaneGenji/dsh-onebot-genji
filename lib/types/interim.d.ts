@@ -82,6 +82,8 @@ export interface InterimContext {
     relayHostCards(chatId: ChatId, content: readonly unknown[]): void;
     /** Per-chat effective outbound mode (/mode override → global config). */
     effectiveInterim(chatId: ChatId): boolean;
+    /** 双发闸（语义版）：回合末正文是不是把工具刚说过的话又重复一遍。 */
+    dropDuplicateFinal?(chatId: ChatId, text: string): boolean;
     /** Bridge log line callback. */
     log(level: 'info' | 'warn' | 'error' | 'debug', message: string): void;
     /** The only config fields the interim domain reads. */

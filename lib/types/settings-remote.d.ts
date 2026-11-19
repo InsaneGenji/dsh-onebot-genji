@@ -46,6 +46,7 @@
 /** 宿主 dsh-workspace 注册表（src/bridge.ts:152 已有结构面；本模块只读消费
  *  list()，不打开 registry 内部态——import type 零运行时依赖，不改 bridge.ts）。 */
 import type { WorkspaceRegistryLike } from './bridge.js';
+import type { StickerAddResult, StickerClearDeletedResult, StickerItemView, StickerMoveResult, StickerRemoveResult, StickerStats, StickerTagResult } from './stickers.js';
 /** patch insert 中 dsh-onebot 主条目的 id（T1 §2/§3：唯一持久层条目）。 */
 export declare const ENTRY_ID = "dsh-onebot";
 /** Typert Remote 命名空间 = cordis 服务键（T1 §4）。 */
@@ -82,6 +83,16 @@ export declare const NOTICE_KEYS: readonly string[];
 export declare const PENDING_SCHEMA_KEYS: readonly string[];
 /** 快照返回侧脱敏的键（T1 §3 敏感字段行；写入侧明文落盘属宿主既有行为）。 */
 export declare const SECRET_KEYS: readonly string[];
+/** 主动搭话前缀（2026-11-19 本地加）：面板扁平键 proactiveXxx 与宿主嵌套
+ *  proactive.xxx 互转。proactiveEnabled 对应 enabled、proactiveTargetUsers 对应 targetUsers。 */
+export declare const PROACTIVE_PREFIX = "proactive";
+/** 扁平键转宿主嵌套子键（proactiveMinIdleMinutes 转 minIdleMinutes）。 */
+export declare function proactiveSubKey(key: string): string;
+/** 是否主动搭话的扁平键（排除 proactive 本身，ALL_KEYS 里也不含它）。 */
+export declare function isProactiveFlatKey(key: string): boolean;
+/** 把面板扁平 proactiveXxx 就地折进宿主嵌套 proactive.xxx（只覆盖 patch 里出现的
+ *  子键，其余按 current 保留）。返回 true 表示至少折了一个键（2026-11-19 本地加）。 */
+export declare function foldProactivePatch(clean: Record<string, unknown>, current: Record<string, unknown>): boolean;
 /** 全部 71 键（校验与快照的唯一键集；9 枚举 + 12 数字 + 29 布尔 + 13 字符串 +
  *  10 字符串数组 + notices 单独通道；T6 新增 gifFramesEnabled、T7 新增
  *  inboxQueueEnabled/inboxQueueDelayMs、T11 新增 sidebarEntryEnabled、T24 新增
@@ -190,6 +201,79 @@ export declare function createOnebotSettingsMethods(editor: ConfigEditorLike, st
     updateSettings(patch: unknown, expectedRevision?: number): Promise<OnebotSettingsSnapshot>;
     listWorkspaces(): Promise<WorkspaceListResult>;
 };
+/** 表情包库面板快照的公共部分（2026-11-19（本地加）：表情包库）。
+ *  形状对齐 lib/settings-remote.js 的 snapshotOf()：ok / root / autoCollect / 两个目录 /
+ *  stats / items；各方法再叠自己的结果字段（不传就没有那个键）。 */
+export interface StickerSnapshotBase {
+    ok: true;
+    root: string;
+    autoCollect: boolean;
+    approvedDir: string;
+    pendingDir: string;
+    stats: StickerStats;
+    items: StickerItemView[];
+}
+/** deleteSticker 的单条结果：ok 保留 store.remove() 的原样返回值（与源文件 1:1，
+ *  不拍平成 bool）。 */
+export interface StickerRemovedEntry {
+    hash: string;
+    ok: StickerRemoveResult;
+}
+/** 表情包库 remote 快照：公共部分 + 本次操作的结果字段。 */
+export type StickerSnapshot = StickerSnapshotBase & {
+    added?: StickerAddResult;
+    cleared?: StickerClearDeletedResult;
+    removed?: StickerRemovedEntry[];
+    results?: StickerTagResult[] | StickerMoveResult[];
+    updated?: StickerTagResult;
+};
+/** readSticker 的返回：原图 data URL；库里没这张时只有 ok+hash，图太大时 tooLarge。 */
+export type StickerReadSnapshot = {
+    ok: true;
+    hash: string;
+    tooLarge: true;
+    bytes: number;
+    mime: null;
+} | {
+    ok: true;
+    hash: string;
+    dataUrl: string;
+    bytes: number;
+    mime: string;
+} | {
+    ok: true;
+    hash: string;
+};
+/** createStickerMethods 的返回面（Remote / Plain 两个类分支按名转发，全部走同一实现）。 */
+export interface StickerMethods {
+    listStickers(): Promise<StickerSnapshot>;
+    addSticker(name: unknown, dataUrl: unknown): Promise<StickerSnapshot & {
+        added: StickerAddResult;
+    }>;
+    clearDeleted(): Promise<StickerSnapshot & {
+        cleared: StickerClearDeletedResult;
+    }>;
+    deleteSticker(hashes: unknown): Promise<StickerSnapshot & {
+        removed: StickerRemovedEntry[];
+    }>;
+    approveStickers(hashes: unknown): Promise<StickerSnapshot & {
+        results: StickerTagResult[];
+    }>;
+    updateSticker(hash: unknown, patch: unknown): Promise<StickerSnapshot & {
+        updated: StickerTagResult;
+    }>;
+    retagStickers(hashes: unknown): Promise<StickerSnapshot & {
+        results: StickerTagResult[];
+    }>;
+    unapproveStickers(hashes: unknown): Promise<StickerSnapshot & {
+        results: StickerMoveResult[];
+    }>;
+    readSticker(hash: unknown): Promise<StickerReadSnapshot>;
+}
+/** 表情包库的 remote 方法集（2026-11-19（本地加）：表情包库，不在键表里）。
+ *  库目录取配置项 stickerRoot（改动即重建 store）；autoCollect 取 stickerAutoCollect。
+ *  审核时用 makeStickerTagger(ctx) 让宿主模型看图写描述与标签。 */
+export declare function createStickerMethods(editor: ConfigEditorLike, ctx: unknown): StickerMethods;
 /** 服务装配：协议在位 → TypertRemoteService 子类（网关按 typertRemote 绑定 +
  *  原型 descriptor 发现）；否则降级为普通 cordis 服务（同名方法面，仅无网关
  *  发现）。两个分支共用上方导出的实现函数与同一 descriptor 形状。 */

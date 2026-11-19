@@ -12,11 +12,15 @@ import { join } from 'node:path'
 
 import { COMMANDS, helpText, packageVersion } from '../src/commands.js'
 import { MediaStore } from '../src/media.js'
-import { makeCmdHarness } from './helpers/bridge-harness.js'
+import { makeCmdHarness, outboundTextJoined, settleOutbound } from './helpers/bridge-harness.js'
+
+// 正文自动切气泡后，一条命令的回复可能是多条消息、条间还有 800–1500ms 停顿；
+// 下面的断言统一先等这批气泡发完再读。给足超时，避免测试被停顿顶爆。
+vi.setConfig({ testTimeout: 60_000 })
 
 describe('commands', () => {
-  it('packageVersion resolves 0.13.0 under ESM (no "?")', () => {
-    expect(packageVersion()).toBe('0.13.0')
+  it('packageVersion resolves 0.14.0 under ESM (no "?")', () => {
+    expect(packageVersion()).toBe('0.14.0')
   })
 
   it('routes slash commands before the model: /new opens a fresh session', async () => {
@@ -89,6 +93,7 @@ describe('commands', () => {
   it('renders the member /help card (memberVisible rows only) for a non-admin (T3-board)', async () => {
     const h = await makeCmdHarness()
     h.sendGroupTextAs('/help', 20002)
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('可用命令：'))).toBe(true)
     })
@@ -142,11 +147,13 @@ describe('commands', () => {
       listModels: async () => [{ provider: 'deepseek', id: 'deepseek-chat' }, { provider: 'deepseek', id: 'deepseek-reasoner' }],
     }
     h.sendText('你好')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     const chat = (h.bridge as unknown as { chats: Map<string, { agent: { session: { id: string }, model: { current: () => { provider: string; model: string } | undefined } } }> }).chats.get('private:10001')!
 
     // 1. /model without args shows the current model and provider catalog.
     h.sendText('/model')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('当前模型：deepseek/deepseek-chat'))).toBe(true)
     })
@@ -154,6 +161,7 @@ describe('commands', () => {
     // 2. /model provider model switches the session selection ONLY — the
     //    deployment default (saveSelection) must stay untouched (M2-C5a).
     h.sendText('/model deepseek deepseek-reasoner')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('已切换当前会话模型：deepseek/deepseek-reasoner'))).toBe(true)
     })
@@ -161,6 +169,7 @@ describe('commands', () => {
     expect(saveSelection).not.toHaveBeenCalled()
     // 3. Unknown model for a provider is rejected with the catalog.
     h.sendText('/model deepseek no-such-model')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('没有模型 no-such-model'))).toBe(true)
     })
@@ -203,13 +212,16 @@ describe('commands', () => {
       },
     })
     h.sendText('你好')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
 
     h.sendText('/model --default')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('用法：/model'))).toBe(true)
     })
     h.sendText('/model a b c')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.filter(f => JSON.stringify(f.params).includes('用法：/model'))).toHaveLength(2)
     })
@@ -264,19 +276,23 @@ describe('commands', () => {
   it('slash /id /ver /status report the session state', async () => {
     const h = await makeCmdHarness()
     h.sendText('你好')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
 
     h.sendText('/id')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('chat    : private:10001'))).toBe(true)
     })
 
     h.sendText('/ver')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('dsh-onebot v'))).toBe(true)
     })
 
     h.sendText('/status')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       const joined = h.outbound.map(f => JSON.stringify(f.params)).join('\n')
       expect(joined).toContain('chat    : private:10001')
@@ -295,37 +311,45 @@ describe('commands', () => {
 
     // /goal stays a native per-chat prefix.
     h.sendText('/goal 验证 9 个命令')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('目标已记录'))).toBe(true)
     })
     h.sendText('普通消息')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     expect(h.captured.followups[0].text).toContain('【当前目标】验证 9 个命令')
 
     // /plan forwards to the host plan command (no 【计划模式】 prefix anymore).
     h.sendText('/plan')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(commands.execute).toHaveBeenCalledWith(expect.anything(), '/plan', [], expect.any(AbortSignal))
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('Plan mode on. Use /plan off to leave.'))).toBe(true)
     })
     h.sendText('/plan 写一个新模块')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(commands.execute).toHaveBeenCalledWith(expect.anything(), '/plan 写一个新模块', [], expect.any(AbortSignal))
     })
     h.sendText('/plan off')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(commands.execute).toHaveBeenCalledWith(expect.anything(), '/plan off', [], expect.any(AbortSignal))
     })
     // No 【计划模式】 prefix on normal turns.
     h.sendText('再来一轮')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2))
     expect(h.captured.followups[1].text).not.toContain('【计划模式】')
 
     h.sendText('/mode instant')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('已切换为 instant'))).toBe(true)
     })
     h.sendText('/mode')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('instant（逐条即时）（/mode 覆盖）'))).toBe(true)
     })
@@ -363,11 +387,13 @@ describe('commands', () => {
     }) }
     const h = await makeCmdHarness({ commands })
     h.sendText('你好')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
 
     // 1. Bare form: the host listing is parsed into the Chinese preset menu
     //    (current + numbered available list + usage line), not a verbatim relay.
     h.sendText('/permission')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(commands.execute).toHaveBeenCalledWith(expect.anything(), '/permission', [], expect.any(AbortSignal))
       const text = h.outbound.map(f => JSON.stringify(f.params)).join('\n')
@@ -386,6 +412,7 @@ describe('commands', () => {
     ]
     for (const [alias, preset] of aliases) {
       h.sendText('/permission ' + alias)
+    await settleOutbound(h)
       await vi.waitFor(() => {
         expect(commands.execute).toHaveBeenCalledWith(expect.anything(), '/permission ' + preset, [], expect.any(AbortSignal))
         const label = preset === 'workspace-write' ? '工作区可写+需审批' : '全盘+免审批'
@@ -396,6 +423,7 @@ describe('commands', () => {
     // 3. Unknown name is forwarded verbatim; the host error reply (with its
     //    available list) is relayed with the ❌ mark.
     h.sendText('/permission nope')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(commands.execute).toHaveBeenCalledWith(expect.anything(), '/permission nope', [], expect.any(AbortSignal))
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('❌ unknown preset \\"nope\\" (available: workspace-write, danger-full-access)'))).toBe(true)
@@ -415,11 +443,13 @@ describe('commands', () => {
     }) }
     const h = await makeCmdHarness({ commands })
     h.sendText('你好')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
 
     // 1. /permission 2 = the second entry of the bare listing's available
     //    order (bare pre-flight first, then the switch).
     h.sendText('/permission 2')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       const lines = (commands.execute as ReturnType<typeof vi.fn>).mock.calls.map(c => c[1])
       expect(lines).toEqual(['/permission', '/permission danger-full-access'])
@@ -428,6 +458,7 @@ describe('commands', () => {
 
     // 2. Out-of-range index: usage fallback, host listing still relayed.
     h.sendText('/permission 9')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       const text = h.outbound.map(f => JSON.stringify(f.params)).join('\n')
       expect(text).toContain('序号 9 无法解释为可用预设')
@@ -447,8 +478,10 @@ describe('commands', () => {
     }) }
     const h = await makeCmdHarness({ commands })
     h.sendText('你好')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     h.sendText('/permission')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       const text = h.outbound.map(f => JSON.stringify(f.params)).join('\n')
       expect(text).toContain('当前权限：team-strict（部署自定义）')
@@ -469,8 +502,10 @@ describe('commands', () => {
     }) }
     const h = await makeCmdHarness({ commands })
     h.sendText('你好')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     h.sendText('/permission')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       const text = h.outbound.map(f => JSON.stringify(f.params)).join('\n')
       expect(text).toContain('permission subsystem degraded: try again later')
@@ -532,25 +567,30 @@ describe('commands', () => {
       agentPresets: { defaultId: 'standard', resolve, mount: vi.fn(async () => ({ id: 'router-flash' })) },
     })
     h.sendText('你好')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     expect(h.capturedMeta[0].agentPreset).toBe('standard')
 
     h.sendText('/preset')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('当前预设：standard'))).toBe(true)
     })
 
     h.sendText('/preset router-flash')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('预设已切换：router-flash'))).toBe(true)
     })
     expect(h.chats().has('private:10001')).toBe(false)
 
     h.sendText('下一条')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2))
     expect(h.capturedMeta[1].agentPreset).toBe('router-flash')
 
     h.sendText('/preset nope')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('预设不存在'))).toBe(true)
     })
@@ -565,6 +605,7 @@ describe('commands', () => {
 
     // No image yet → friendly prompt.
     h.sendText('/ocr')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('请先在对话里发一张图片'))).toBe(true)
     })
@@ -574,6 +615,7 @@ describe('commands', () => {
     await writeFile(png, Buffer.from('89504e470d0a1a0a', 'hex'))
     ;(h.bridge as unknown as { registry: { getSettings(id: string): { lastImagePath?: string } } }).registry.getSettings('private:10001').lastImagePath = png
     h.sendText('/ocr')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('第一行文字'))).toBe(true)
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('第二行文字'))).toBe(true)
@@ -634,6 +676,7 @@ describe('commands', () => {
       raw_message: '/ocr [CQ:image,file=base64://...]',
       sender: { user_id: 10001, nickname: '小明' },
     }))
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('命令消息里的图片'))).toBe(true)
     })
@@ -646,6 +689,7 @@ describe('commands', () => {
   it('slash /help lists the full routed command table for an admin (M2-T0 command table)', async () => {
     const h = await makeCmdHarness()
     h.sendText('/help')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('可用命令'))).toBe(true)
     })
@@ -764,6 +808,7 @@ describe('commands', () => {
   it('/doctor test sends a marker through the full outbound pipeline and reports success with latency (T3-board)', async () => {
     const h = await makeCmdHarness()
     h.sendText('/doctor test')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       // The marker itself is visible in the chat — receiving it IS the
       // success signal, so the self-test goes through sendToChat (production
@@ -788,6 +833,7 @@ describe('commands', () => {
     const h = await makeCmdHarness()
     const spy = vi.spyOn(h.bridge, 'sendToChat').mockRejectedValueOnce(new Error('boom: 链路炸了'))
     h.sendText('/doctor test')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('⚠️ /doctor test 自测失败'))).toBe(true)
     })
@@ -803,6 +849,7 @@ describe('commands', () => {
   it('/silent: default 30-minute window drops normal messages, keeps commands, and lifts early (T3-board)', async () => {
     const h = await makeCmdHarness()
     h.sendText('/silent')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('🔇 已静音 30 分钟'))).toBe(true)
     })
@@ -810,21 +857,25 @@ describe('commands', () => {
     // Normal messages during the window are dropped silently: no reply and
     // no agent dispatch (the drop sits after command routing, before dispatch).
     h.sendText('静音期间的第一条')
+    await settleOutbound(h)
     await new Promise(resolve => setTimeout(resolve, 500))
     expect(h.captured.followups).toHaveLength(0)
     expect(h.outbound.length).toBe(afterSilent)
     // Slash commands still route inside the window.
     h.sendText('/help')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('可用命令（仅管理员）'))).toBe(true)
     })
     // A bare /silent lifts the window early.
     h.sendText('/silent')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('🔔 已解除静音'))).toBe(true)
     })
     // Normal messages dispatch again after the lift.
     h.sendText('解除后的第一条')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     h.client.close()
     await h.bridge.stop()
@@ -834,30 +885,36 @@ describe('commands', () => {
   it('/silent <分钟> sets a custom window, invalid input gets the usage line, and members cannot silence (T3-board)', async () => {
     const h = await makeCmdHarness()
     h.sendText('/silent 5')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('🔇 已静音 5 分钟'))).toBe(true)
     })
     // Out-of-range minutes get the usage line, not a window.
     h.sendText('/silent 0')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('分钟数无效'))).toBe(true)
     })
     h.sendText('/silent 99999')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.filter(f => JSON.stringify(f.params).includes('分钟数无效'))).toHaveLength(2)
     })
     // Bracketed numbers are tolerated (same posture as /session).
     h.sendText('/silent [15]')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('🔇 已静音 15 分钟'))).toBe(true)
     })
     // A member cannot silence the chat: admin gate replies, and the group
     // chat keeps dispatching (silence state is per-chat and none was set).
     h.sendGroupTextAs('/silent', 20002)
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('仅管理员可用'))).toBe(true)
     })
     h.sendGroupTextAs('普通成员消息', 20002)
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     h.client.close()
     await h.bridge.stop()
@@ -877,16 +934,19 @@ describe('commands', () => {
     }
     const notDir = join(h.mediaDir, 'not-a-dir.txt')
     await writeFile(notDir, 'x')
-    const text = () => h.outbound.map(f => JSON.stringify(f.params)).join('\n')
+    // 气泡切分后一句话可能跨两条消息，只拼 text 段（'' 分隔）才能还原原文。
+    const text = () => outboundTextJoined(h.outbound)
 
     // /retry with nothing to retry: reason + next step.
     h.sendText('/retry')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(text()).toContain('没有可重试的上一条消息')
       expect(text()).toContain('先发送一条消息，之后才能 /retry')
     })
     // /mode invalid value: current effective mode + the legal values.
     h.sendText('/mode blah')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(text()).toContain('无法识别的出站模式：blah')
       expect(text()).toContain('当前生效：interim（合并卡片）')
@@ -894,18 +954,21 @@ describe('commands', () => {
     })
     // /workspace pointing at a file (not a directory): numbered-list pointer.
     h.sendText('/workspace ' + notDir)
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(text()).toContain('❌ 不是目录：' + notDir)
       expect(text()).toContain('发 /workspace 查看编号列表，或发 /workspace list 查看全部')
     })
     // /preset unknown id with no on-disk presets: still carries the usage line.
     h.sendText('/preset nope')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(text()).toContain('❌ 预设不存在：nope')
       expect(text()).toContain('用法：/preset <id|序号> 切换')
     })
     // /model unknown model for the provider: available list + usage line.
     h.sendText('/model deepseek no-such-model')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(text()).toContain('没有模型 no-such-model')
       expect(text()).toContain('用法：/model <provider> <model>')
@@ -949,14 +1012,16 @@ describe('commands', () => {
   it('unknown command without a close match is intercepted by default (unknownCommand: intercept)', async () => {
     const h = await makeCmdHarness()
     h.sendText('/xyzw')
+    await settleOutbound(h)
     await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('未知命令 /xyzw。发 /help 查看命令列表'))).toBe(true)
+      expect(outboundTextJoined(h.outbound)).toContain('未知命令 /xyzw。发 /help 查看命令列表')
     })
     // Inputs shorter than 4 never use the edit-distance fallback (/xy would be
     // distance 2 from /id), so they stay suggestion-less and just get the hint.
     h.sendText('/xy')
+    await settleOutbound(h)
     await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('未知命令 /xy。发 /help 查看命令列表'))).toBe(true)
+      expect(outboundTextJoined(h.outbound)).toContain('未知命令 /xy。发 /help 查看命令列表')
     })
     expect(h.captured.followups).toHaveLength(0)
     h.client.close()
@@ -1059,13 +1124,16 @@ describe('commands · serial selection (R2)', () => {
     const h = await makeCmdHarness()
     ;(h.bridge as unknown as { deps: { workspaceRegistry?: unknown } }).deps.workspaceRegistry = wsRegistry(h.mediaDir, otherDir)
     h.sendText('你好')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     h.sendText('/workspace')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('工作区列表'))).toBe(true)
     })
 
     h.sendText('/workspace 9')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('序号越界，请回复 /workspace 重新查看列表'))).toBe(true)
     })
@@ -1073,6 +1141,7 @@ describe('commands · serial selection (R2)', () => {
     expect(pendingOf(h)?.items).toHaveLength(2)
 
     h.sendText('/workspace 1')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('工作区已切换'))).toBe(true)
     })
@@ -1088,8 +1157,10 @@ describe('commands · serial selection (R2)', () => {
     const h = await makeCmdHarness()
     ;(h.bridge as unknown as { deps: { workspaceRegistry?: unknown } }).deps.workspaceRegistry = wsRegistry(h.mediaDir, otherDir)
     h.sendText('你好')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     h.sendText('/workspace')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('工作区列表'))).toBe(true)
     })
@@ -1098,6 +1169,7 @@ describe('commands · serial selection (R2)', () => {
     const settings = registryOf(h).getSettings('private:10001')
     settings.pendingSelection!.createdAt = Date.now() - 6 * 60_000
     h.sendText('/workspace 1')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('序号选择已过期，请重新执行 /workspace 查看'))).toBe(true)
     })
@@ -1105,6 +1177,7 @@ describe('commands · serial selection (R2)', () => {
 
     // Cleared → the next numeric input is back to the original path semantics.
     h.sendText('/workspace 123')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('❌ 目录无效或不可访问：123'))).toBe(true)
     })
@@ -1122,17 +1195,21 @@ describe('commands · serial selection (R2)', () => {
       agentPresets: { defaultId: 'standard', resolve, mount: vi.fn() },
     })
     h.sendText('你好')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
 
     h.sendText('/workspace 123')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('❌ 目录无效或不可访问：123'))).toBe(true)
     })
     h.sendText('/model 123')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('用法：/model <provider> <model>'))).toBe(true)
     })
     h.sendText('/preset 123')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('❌ 预设不存在：123'))).toBe(true)
     })
@@ -1158,11 +1235,13 @@ describe('commands · serial selection (R2)', () => {
         : [{ provider, id: 'deepseek-chat' }, { provider, id: 'deepseek-reasoner' }],
     }
     h.sendText('你好')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     const chat = (h.bridge as unknown as { chats: Map<string, { agent: { model: { current: () => { provider: string; model: string } | undefined } } }> }).chats.get('private:10001')!
 
     // Level 0 → 1: the bare form numbers the providers and snapshots them.
     h.sendText('/model')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       const text = h.outbound.map(f => JSON.stringify(f.params)).join('\n')
       expect(text).toContain('当前模型：deepseek/deepseek-chat')
@@ -1175,6 +1254,7 @@ describe('commands · serial selection (R2)', () => {
 
     // Level 1 → 2: /model 2 lists that provider's models.
     h.sendText('/model 2')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       const text = h.outbound.map(f => JSON.stringify(f.params)).join('\n')
       expect(text).toContain('模型列表（openai）')
@@ -1185,6 +1265,7 @@ describe('commands · serial selection (R2)', () => {
 
     // Level-2 hit: /model 1 switches ONLY the session selection (original path).
     h.sendText('/model 1')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('已切换当前会话模型：openai/gpt-4o'))).toBe(true)
     })
@@ -1194,6 +1275,7 @@ describe('commands · serial selection (R2)', () => {
 
     // --default regression with the selection machinery present (not numeric).
     h.sendText('/model --default deepseek deepseek-reasoner')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('已修改部署默认模型：deepseek/deepseek-reasoner'))).toBe(true)
     })
@@ -1219,9 +1301,11 @@ describe('commands · serial selection (R2)', () => {
       agentPresets: { defaultId: 'standard', resolve, mount: vi.fn(async () => ({ id: 'beta' })) },
     })
     h.sendText('你好')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
 
     h.sendText('/preset')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       const text = h.outbound.map(f => JSON.stringify(f.params)).join('\n')
       expect(text).toContain('当前预设：standard')
@@ -1232,17 +1316,20 @@ describe('commands · serial selection (R2)', () => {
     expect(pendingOf(h)?.items.map(i => i.payload)).toEqual(['alpha', 'beta'])
 
     h.sendText('/preset 9')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('序号越界，请回复 /preset 重新查看列表'))).toBe(true)
     })
     expect(pendingOf(h)?.items).toHaveLength(2)
 
     h.sendText('/preset 2')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('预设已切换：beta'))).toBe(true)
     })
     expect(pendingOf(h)).toBeUndefined()
     h.sendText('下一条')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2))
     expect(h.capturedMeta[1].agentPreset).toBe('beta')
 
@@ -1259,6 +1346,7 @@ describe('commands · serial selection (R2)', () => {
       },
     })
     h.sendText('你好')
+    await settleOutbound(h)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     const chat = h.chats().get('private:10001')!
     ;(chat.agent.model as { current: () => unknown }).current = () => { throw new Error('model registry exploded') }
@@ -1266,10 +1354,12 @@ describe('commands · serial selection (R2)', () => {
     // Both surfaces fall back to the deployment default (the only way
     // fallback/default-1 can appear is via the safe fallback path).
     h.sendText('/model')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('当前模型：fallback/default-1'))).toBe(true)
     })
     h.sendText('/status')
+    await settleOutbound(h)
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('model   : fallback/default-1'))).toBe(true)
     })

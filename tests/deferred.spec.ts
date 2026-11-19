@@ -19,6 +19,10 @@
  * harness，不采用；改为放宽真实时钟等待边界至实测抖动上限的 ≥5 倍——
  * 所有 vi.waitFor 显式 { timeout: 5_000 }（默认 1s，并发负载下被观测突破）、
  * 零写入负向断言窗口 50ms→250ms（只放宽等待窗，断言判定不变、强度不降）。
+ * 2026-11-19 正文自动切气泡（lib/outbound.js splitIntoBubbles）：一次回复拆成
+ * 最多 4 条独立 send_msg，条间 800–1500ms 停顿；「（超时补发）」前缀自带换行，
+ * 所以补发正文一定落在前缀气泡之后。集成断言改为「等发送链排空（settleOutbound）
+ * 后把全部气泡 text 段拼回原文（outboundTextJoined）」再判包含/出现次数。
  * @module dsh-onebot/tests/deferred
  */
 import { describe, expect, it, vi } from 'vitest'
@@ -38,7 +42,34 @@ import {
   buildDeferredText,
 } from '../src/deferred.js'
 import type { DeferredContext, DeferredEntry } from '../src/deferred.js'
-import { makeCmdHarness, makeEvent, makeHarness, sentTexts } from './helpers/bridge-harness.js'
+import { makeCmdHarness, makeEvent, makeHarness, outboundTextJoined, sentTexts, settleOutbound } from './helpers/bridge-harness.js'
+
+/** 各气泡 text 段拼回原文（气泡切分前的样子）。 */
+const replyText = (h: { outbound: Array<Record<string, unknown>> }): string => outboundTextJoined(h.outbound)
+
+/** needle 在 haystack 里的出现次数（拼回原文后数「恰一次」用）。 */
+const occurrences = (haystack: string, needle: string): number => haystack.split(needle).length - 1
+
+/**
+ * 只把发往某个聊天的气泡拼回原文。每个聊天各有自己的串行发送链（src/outbound.ts
+ * 的 OutboundPipeline），两条链互相独立：多聊天的用例里，A 聊天的正文气泡完全
+ * 可能插在 B 聊天的「（超时补发）」前缀与其正文之间，全局拼接的顺序因此不稳定。
+ * 要判「前缀后面紧跟的是哪段正文」，必须按聊天分桶。
+ */
+const chatText = (
+  h: { outbound: Array<Record<string, unknown>> },
+  chat: { kind: 'group' | 'private'; id: string },
+): string =>
+  outboundTextJoined(h.outbound.filter(frame => {
+    const params = frame.params as Record<string, unknown> | undefined
+    if (params?.group_id !== undefined) return chat.kind === 'group' && String(params.group_id) === chat.id
+    if (params?.user_id !== undefined) return chat.kind === 'private' && String(params.user_id) === chat.id
+    return false
+  }))
+
+/** 等这批气泡全部发完（每个聊天的发送链排空 + 静默期）。 */
+const settle = async (h: { bridge: unknown }): Promise<void> =>
+  settleOutbound(h as unknown as Parameters<typeof settleOutbound>[0])
 
 /** 注册表读取助手：解析 JSONL 为条目数组。 */
 function readRegistry(mediaDir: string): DeferredEntry[] {
@@ -535,16 +566,20 @@ describe('deferred 集成 — 超时→登记→完成→补发恰一次', () =>
       turn: 1, step: 2, message: { role: 'assistant', content: [{ type: 'text', text: '超时后的最终答案' }] },
     }))
     expect(sentTexts(h.outbound).some(text => text.includes('超时后的最终答案'))).toBe(false)
+    expect(replyText(h)).not.toContain('超时后的最终答案')
 
-    // 完成：补发恰一次（带「（超时补发）」前缀 + 最终文字）
+    // 完成：补发恰一次（带「（超时补发）」前缀 + 最终文字）；气泡切分后前缀
+    // 单独一条，正文在后面几条里，等链排空再拼回原文断言
     h.ctx.emit('session/event', { id: h.sessionIds[0] } as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
-    await vi.waitFor(() => expect(sentTexts(h.outbound).some(text => text.includes('（超时补发）'))).toBe(true), { timeout: 5_000 })
-    const deferredSends = sentTexts(h.outbound).filter(text => text.includes('（超时补发）'))
-    expect(deferredSends).toHaveLength(1)
-    expect(deferredSends[0]).toContain('超时后的最终答案')
+    await vi.waitFor(() => expect(replyText(h)).toContain('（超时补发）'), { timeout: 20_000 })
+    await vi.waitFor(() => expect(readRegistry(mediaDir)[0]?.state).toBe('delivered'), { timeout: 5_000 })
+    await settle(h)
+    const reply = replyText(h)
+    expect(occurrences(reply, '（超时补发）')).toBe(1) // 补发恰一次
+    expect(reply).toContain('超时后的最终答案')
+    expect(reply.indexOf('超时后的最终答案')).toBeGreaterThan(reply.indexOf('（超时补发）'))
 
     // 终态落盘 + trace 中文 reason（登记 notice + 补发 queue）
-    await vi.waitFor(() => expect(readRegistry(mediaDir)[0]?.state).toBe('delivered'), { timeout: 5_000 })
     await sink.flush()
     const traceText = readFileSync(join(mediaDir, 'qq-trace.jsonl'), 'utf8')
     expect(traceText).toContain('等待模型回复超时，已登记超时补发跟踪')
@@ -582,11 +617,14 @@ describe('deferred 集成 — 超时→登记→完成→补发恰一次', () =>
     h2.ctx.emit('session/event', { id: sessionId } as never, makeEvent('assistant/message', {
       turn: 1, step: 3, message: { role: 'assistant', content: [{ type: 'text', text: '重启后的最终答案' }] },
     }))
-    expect(sentTexts(h2.outbound).some(text => text.includes('重启后的最终答案'))).toBe(false)
+    expect(replyText(h2)).not.toContain('重启后的最终答案')
     h2.ctx.emit('session/event', { id: sessionId } as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
-    await vi.waitFor(() => expect(sentTexts(h2.outbound).some(text => text.includes('（超时补发）'))).toBe(true), { timeout: 5_000 })
-    expect(sentTexts(h2.outbound).filter(text => text.includes('（超时补发）'))).toHaveLength(1)
-    expect(sentTexts(h2.outbound).find(text => text.includes('（超时补发）'))).toContain('重启后的最终答案')
+    await vi.waitFor(() => expect(replyText(h2)).toContain('（超时补发）'), { timeout: 20_000 })
+    await settle(h2)
+    const reply = replyText(h2)
+    expect(occurrences(reply, '（超时补发）')).toBe(1) // 重启恢复后补发恰一次
+    expect(reply).toContain('重启后的最终答案')
+    expect(reply.indexOf('重启后的最终答案')).toBeGreaterThan(reply.indexOf('（超时补发）'))
     await vi.waitFor(() => expect(readRegistry(mediaDir).find(entry => entry.sessionId === sessionId)?.state).toBe('delivered'), { timeout: 5_000 })
 
     h2.client.close()
@@ -654,9 +692,11 @@ describe('deferred 集成 — terminal 条目不吞错误通知 / 防双发抑�
     h.ctx.emit('session/event', { id: h.sessionIds[0] } as never, makeEvent('turn/start', { turn: 1 }))
     await vi.waitFor(() => expect(readRegistry(h.mediaDir).some(entry => entry.state === 'pending')).toBe(true), { timeout: 5_000 })
     h.ctx.emit('session/event', { id: h.sessionIds[0] } as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'error', error: { message: '任务失败原因' } } }))
-    await vi.waitFor(() => expect(sentTexts(h.outbound).some(text => text.includes('（超时补发）') && text.includes('任务已结束：运行出错：任务失败原因'))).toBe(true), { timeout: 5_000 })
-    expect(sentTexts(h.outbound).filter(text => text.includes('（超时补发）'))).toHaveLength(1) // 补发恰一条
-    expect(sentTexts(h.outbound).some(text => text.includes('⚠️ 运行出错'))).toBe(false) // 常规错误通知被抑制（无双发）
+    await vi.waitFor(() => expect(replyText(h)).toContain('任务已结束：运行出错：任务失败原因'), { timeout: 20_000 })
+    await settle(h)
+    const reply = replyText(h)
+    expect(occurrences(reply, '（超时补发）')).toBe(1) // 补发恰一条
+    expect(reply).not.toContain('⚠️ 运行出错') // 常规错误通知被抑制（无双发）
 
     h.client.close()
     await h.bridge.stop()
@@ -673,11 +713,15 @@ describe('deferred 集成 — terminal 条目不吞错误通知 / 防双发抑�
     h.ctx.emit('session/event', { id: h.sessionIds[0] } as never, makeEvent('assistant/message', {
       turn: 1, step: 2, message: { role: 'assistant', content: [{ type: 'text', text: '回合A的最终答案' }] },
     }))
-    // 补发首发明确失败一次（网关拒绝 → retryable → 2s 退避），其后恢复
+    // 补发首发明确失败一次（网关拒绝 → retryable → 2s 退避），其后恢复。
+    // 注意：只拦「（超时补发）」那条——超时提醒本身也会被切成多条气泡，
+    // 第二条气泡的发送可能落在这个补丁装好之后（否则吃掉失败注入，attempts=1）。
     const realCall = h.connection.call.bind(h.connection)
     let failedOnce = false
     h.connection.call = (async (action: string, params: unknown) => {
-      if (action === 'send_msg' && !failedOnce) {
+      const segments = (params as { message?: Array<{ type: string; data: { text?: string } }> }).message ?? []
+      const text = segments.filter(seg => seg.type === 'text').map(seg => seg.data.text ?? '').join('')
+      if (action === 'send_msg' && !failedOnce && text.includes('（超时补发）')) {
         failedOnce = true
         throw new OneBotActionError('send_msg failed: retcode 500')
       }
@@ -691,13 +735,14 @@ describe('deferred 集成 — terminal 条目不吞错误通知 / 防双发抑�
       turn: 2, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: '回合B的输出' }] },
     }))
     h.ctx.emit('session/event', { id: h.sessionIds[0] } as never, makeEvent('turn/end', { turn: 2, reason: { kind: 'error', error: { message: '退避窗口内的新错误' } } }))
-    await vi.waitFor(() => expect(sentTexts(h.outbound).some(text => text.includes('⚠️ 运行出错：退避窗口内的新错误'))).toBe(true), { timeout: 8_000 })
+    await vi.waitFor(() => expect(replyText(h)).toContain('⚠️ 运行出错：退避窗口内的新错误'), { timeout: 20_000 })
     // 在途循环不受影响：退避到点第 2 次尝试成功，补发恰一次且是回合 A 的文字副本
     await vi.waitFor(() => expect(readRegistry(h.mediaDir)[0]?.state).toBe('delivered'), { timeout: 10_000 })
-    const deferredSends = sentTexts(h.outbound).filter(text => text.includes('（超时补发）'))
-    expect(deferredSends).toHaveLength(1)
-    expect(deferredSends[0]).toContain('回合A的最终答案')
-    expect(deferredSends[0]).not.toContain('回合B的输出') // 回合 B 不产生补发条目
+    await settle(h)
+    const reply = replyText(h)
+    expect(occurrences(reply, '（超时补发）')).toBe(1) // 补发恰一次
+    expect(reply).toContain('回合A的最终答案')
+    expect(reply).not.toContain('回合B的输出') // 回合 B 不产生补发条目
     const entries = readRegistry(h.mediaDir)
     expect(entries).toHaveLength(1)
     expect(entries[0].state).toBe('delivered')
@@ -743,11 +788,21 @@ describe('deferred 集成 — /stop 与零差异面', () => {
       turn: 1, step: 2, message: { role: 'assistant', content: [{ type: 'text', text: '群聊答案' }] },
     }))
     h.ctx.emit('session/event', { id: h.sessionIds[1] } as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
-    await vi.waitFor(() => expect(sentTexts(h.outbound).some(text => text.includes('群聊答案'))).toBe(true), { timeout: 5_000 })
-    const deferredSends = sentTexts(h.outbound).filter(text => text.includes('（超时补发）'))
-    expect(deferredSends).toHaveLength(1)
-    expect(deferredSends[0]).toContain('群聊答案')
-    expect(deferredSends[0]).not.toContain('私聊答案')
+    await vi.waitFor(() => expect(replyText(h)).toContain('群聊答案'), { timeout: 20_000 })
+    await settle(h)
+    const reply = replyText(h)
+    expect(occurrences(reply, '（超时补发）')).toBe(1) // 只有群聊那一条补发，私聊条目已被 /stop 取消
+    // 按聊天分桶再判「前缀后面紧跟哪段正文」：两条发送链交错，全局拼接顺序不稳定
+    const group = chatText(h, { kind: 'group', id: '888' })
+    const direct = chatText(h, { kind: 'private', id: '10001' })
+    // 群聊：前缀气泡 + 正文气泡（同一聊天串行，顺序确定）拼回原文就是「（超时补发）\n群聊答案」
+    expect(group).toContain('（超时补发）群聊答案')
+    expect(occurrences(group, '（超时补发）')).toBe(1)
+    expect(group).not.toContain('私聊答案')
+    // 私聊：/stop 后终稿照常常规发送，但绝不带补发前缀
+    expect(direct).toContain('私聊答案')
+    expect(direct).not.toContain('（超时补发）')
+    expect(direct).not.toContain('群聊答案')
 
     h.client.close()
     await h.bridge.stop()

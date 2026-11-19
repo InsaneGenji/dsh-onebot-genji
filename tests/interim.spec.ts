@@ -629,31 +629,33 @@ describe('interim tracker', () => {
         { type: 'tool-call', id: 'call-1', name: 'bash', arguments: '{}' },
       ] },
     }))
+    // 正文自动切气泡（issue #6）：104 字按句末标点切成 4 条独立消息，条间有
+    // 800–1500ms 停顿，所以先等整批发完、再把各条的文本拼回原文做断言。
     await vi.waitFor(() => {
-      expect(outbound.filter(f => f.action === 'send_msg')).toHaveLength(1)
-    })
-    // Live send: the full text goes out once, unsplit.
-    expect(outbound.filter(f => f.action === 'send_msg').map(textOf).join('')).toBe(text)
+      expect(outbound.filter(f => f.action === 'send_msg').map(textOf).join('')).toBe(text)
+    }, { timeout: 10_000 })
+    const liveFrames = outbound.filter(f => f.action === 'send_msg')
+    expect(liveFrames.length).toBeGreaterThan(1)
 
     const at = outbound.length
     ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
     await vi.waitFor(() => {
-      expect(outbound.filter(f => f.action === 'delete_msg')).toHaveLength(1)
-    })
+      expect(outbound.filter(f => f.action === 'delete_msg')).toHaveLength(liveFrames.length)
+    }, { timeout: 15_000 })
 
     // Summary body: the full text appears exactly once, numbering stays
     // contiguous (no orphan "2." line from the empty-text sibling entry).
     const summary = outbound.slice(at).filter(f => f.action === 'send_msg').map(textOf).join('')
     expect(summary).toBe('1. ' + text)
-    // Recall intact: the one QQ message of the interim is revoked.
-    const liveIds = echoed.filter(e => e.action === 'send_msg').slice(0, 1).map(e => e.id)
+    // Recall intact: every bubble of the interim is revoked.
+    const liveIds = echoed.filter(e => e.action === 'send_msg').slice(0, liveFrames.length).map(e => e.id)
     expect(outbound.filter(f => f.action === 'delete_msg').map(f => (f.params as { message_id: string }).message_id).sort())
       .toEqual(liveIds.sort())
 
     client.close()
     await bridge.stop()
     await connection.stop()
-  })
+  }, 30_000)
 
   it('keeps one summary line when an interim carries a [[qq_forward]] block plus body (forward fake id still recalls)', async () => {
     const ctx = new Context()

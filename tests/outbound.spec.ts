@@ -61,7 +61,7 @@ describe('outbound pipeline', () => {
     await h.connection.stop()
   }, 60_000)
 
-  it('falls back to a single plain text message when the card exceeds maxImageBytes', async () => {
+  it('falls back to plain text bubbles when the card exceeds maxImageBytes', async () => {
     const h = await makeHarness({ textImageThreshold: 10, maxImageBytes: 500 })
     h.sendText('hi')
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
@@ -71,12 +71,17 @@ describe('outbound pipeline', () => {
       turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: longText }] },
     }))
     h.ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
+    // 2026-11-19 气泡切分：长文本按句末标点拆成多条独立 send_msg，
+    // 断言改成聚合全部文本（与「完整送达」的原意一致）。
+    const joinedText = (): string => h.outbound
+      .filter(f => f.action === 'send_msg')
+      .flatMap(f => f.params.message as Array<{ type: string; data: { text?: string } }>)
+      .filter(s => s.type === 'text')
+      .map(s => s.data.text ?? '')
+      .join('')
     await vi.waitFor(() => {
-      expect(h.outbound.filter(f => f.action === 'send_msg')).toHaveLength(1)
-    })
-    const textFrame = h.outbound.find(f => f.action === 'send_msg')!
-    const segments = textFrame.params.message as Array<{ type: string; data: { text: string } }>
-    expect(segments.filter(s => s.type === 'text').map(s => s.data.text).join('')).toBe(longText)
+      expect(joinedText()).toBe(longText)
+    }, { timeout: 15_000 })
     expect(h.outbound.some(f => JSON.stringify(f.params).includes('base64://'))).toBe(false)
     h.client.close()
     await h.bridge.stop()
@@ -232,7 +237,7 @@ describe('outbound pipeline', () => {
     await vi.waitFor(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('计划书'))).toBe(true)
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('实现 A 与 B'))).toBe(true)
-    })
+    }, { timeout: 15_000 })
 
     // Re-emitting the same message id consecutively (streaming/usage) must not
     // double-relay — dedupe keys on the latest handled id, re-emits arrive in order.
@@ -256,12 +261,12 @@ describe('outbound pipeline', () => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('选哪个方案？'))).toBe(true)
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('方案A'))).toBe(true)
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('可多选'))).toBe(true)
-    })
+    }, { timeout: 15_000 })
 
     h.client.close()
     await h.bridge.stop()
     await h.connection.stop()
-  })
+  }, 30_000)
 })
 
 describe('outbound proactive-write gate (W2-③)', () => {
@@ -510,7 +515,7 @@ describe('T9: stripBoundaryLeakage', () => {
     h.ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
     await vi.waitFor(() => {
       expect(sentTexts(h.outbound).some(t => t.includes('已收到你的消息'))).toBe(true)
-    })
+    }, { timeout: 15_000 })
     const texts = sentTexts(h.outbound).join('\n')
     expect(texts).not.toContain('user_message')
     h.client.close()

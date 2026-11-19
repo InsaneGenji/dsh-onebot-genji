@@ -104,6 +104,8 @@ export interface InterimContext {
   relayHostCards(chatId: ChatId, content: readonly unknown[]): void
   /** Per-chat effective outbound mode (/mode override → global config). */
   effectiveInterim(chatId: ChatId): boolean
+  /** 双发闸（语义版）：回合末正文是不是把工具刚说过的话又重复一遍。 */
+  dropDuplicateFinal?(chatId: ChatId, text: string): boolean
   /** Bridge log line callback. */
   log(level: 'info' | 'warn' | 'error' | 'debug', message: string): void
   /** The only config fields the interim domain reads. */
@@ -241,6 +243,12 @@ export class InterimTracker {
         // T4 (PR port 沉默哨兵)：整段只有哨兵 → 只记日志，不发送。
         if (isSilenceText(final)) {
           this.ctx.log('info', 'silenced turn for ' + chatId)
+          return
+        }
+        // 双发闸（语义版，2026-11-19 加回）：工具已经用文字说过同一句时，
+        // 回合末正文只是重复就不发。
+        if (this.ctx.dropDuplicateFinal?.(chatId, final) === true) {
+          this.ctx.log('info', 'final dropped (duplicate of tool text): ' + chatId)
           return
         }
         this.ctx.sendToChat(chatId, final, { queuable: true }).catch(error => {
@@ -419,6 +427,8 @@ export class InterimTracker {
       // T4 (PR port 沉默哨兵)：整段只有哨兵 → 只记日志，不发送。
       if (isSilenceText(final)) {
         this.ctx.log('info', 'silenced turn for ' + chatId)
+      } else if (this.ctx.dropDuplicateFinal?.(chatId, final) === true) {
+        this.ctx.log('info', 'final dropped (duplicate of tool text): ' + chatId)
       } else {
         try {
           await this.ctx.sendToChat(chatId, final, { queuable: true })

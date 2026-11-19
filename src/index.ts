@@ -42,8 +42,15 @@ let InboundRecorder: typeof import('./record.js').InboundRecorder
 let InjectChannel: typeof import('./inject.js').InjectChannel
 let redactSnapshot: typeof import('./health.js').redactSnapshot
 let describeError: typeof import('./errors.js').describeError
-let configureSendSegments: typeof import('./tools.js').configureSendSegments
 let resolveUserQuestions: typeof import('./ask-tool.js').resolveUserQuestions
+// 2026-11-19 本地加：主动搭话（原 startup/qq-alive.mjs 合并进插件）与表情包库。
+// 2026-11-19：会话 source 写入形态必须走 producer-owned kind，抽成常量便于静态审计。
+const PROACTIVE_MESSAGE_SOURCE = { kind: 'plugin:dsh-onebot' } as const
+let createUserMessage: typeof import('@deepseek-ai/dsh-llm').createUserMessage
+let BlockAssembler: typeof import('@deepseek-ai/dsh-llm').BlockAssembler
+let ProactiveTalk: typeof import('./proactive.js').ProactiveTalk
+let StickerStore: typeof import('./stickers.js').StickerStore
+let DEFAULT_STICKER_ROOT: string
 
 try {
   ;({ default: z } = await import('@deepseek-ai/schemastery'))
@@ -56,7 +63,9 @@ try {
   ;({ InjectChannel } = await import('./inject.js'))
   ;({ redactSnapshot } = await import('./health.js'))
   ;({ describeError } = await import('./errors.js'))
-  ;({ configureSendSegments } = await import('./tools.js'))
+  ;({ createUserMessage, BlockAssembler } = await import('@deepseek-ai/dsh-llm'))
+  ;({ ProactiveTalk } = await import('./proactive.js'))
+  ;({ StickerStore, DEFAULT_STICKER_ROOT } = await import('./stickers.js'))
   ;({ resolveUserQuestions } = await import('./ask-tool.js'))
 } catch (error) {
   console.error('[dsh-onebot] 挂载失败：peer 依赖解析失败或关键模块缺失 —— 部署副本必须带完整 node_modules 链接集（scripts/link-host.sh 产物），只复制 lib/ 不够。原始错误：' + (error instanceof Error ? error.message : String(error)))
@@ -207,8 +216,31 @@ export interface Config {
   sendErrorNotice: boolean
   /** T8/#27: auto-receipt notice switches — boolean, or a custom text string. */
   notices: { steerAccepted?: boolean | string, queue?: boolean | string, answerAccepted?: boolean | string, deferredTimeout?: boolean | string, rateLimited?: boolean | string }
-  /** T14 (#6 补充): qq_send_segments 插件页开关与分段发送间隔（呼吸感）。 */
-  segments: { enabled: boolean, intervalMs: number }
+  /** 回合形式掷骰（本地加 2026-11-18）：语音条 / 表情包的开关与概率。 */
+  voiceReplyEnabled: boolean
+  voiceReplyProb: number
+  stickerReplyEnabled: boolean
+  stickerReplyProb: number
+  /** 表情包库根目录；空串 = DEFAULT_STICKER_ROOT（~/.dsh/dsh-onebot-genji/stickers）。 */
+  stickerRoot: string
+  stickerAutoCollect: boolean
+  /** 主动搭话（本地加 2026-11-19，原 startup/qq-alive.mjs 合并进插件）。 */
+  proactive: {
+    enabled: boolean
+    targetUsers: string[]
+    minIdleMinutes: number
+    minGapMinutes: number
+    maxPerDay: number
+    quietFrom: number
+    quietTo: number
+    attemptGapMinutes: number
+    burstProb: number
+    followupEnabled: boolean
+    followupMinSec: number
+    followupMaxSec: number
+    followupProb: number
+    followupMaxPerDay: number
+  }
   /** Per-chat per-minute sliding-window cap for normal (non-command) messages; 0 disables. */
   rateLimitPerMinute: number
   restrictedMemberPrefix: boolean
@@ -426,13 +458,49 @@ export const Config: Z<Config> = z.object({
       .description('消息太频繁频控提示文案（每窗口至多一条）：false=不发；true/缺省=默认文案；非空 string=自定义文案；空串=不发'),
   }).default({})
     .description('自动回执开关/自定义文案集合；缺省全部为默认文案开启（与 0.9.x 行为一致）'),
-  segments: z.object({
+  voiceReplyEnabled: z.boolean().default(true)
+    .description('回合形式掷骰（本地加 2026-11-18）：true = 按概率把某些回合的回复形式指定成语音条'),
+  voiceReplyProb: z.number().min(0).max(1).default(0.1)
+    .description('语音条概率（0–1，默认 0.10）：每回合独立掷骰；语音条那轮插件会在提示词里提示「这一轮用语音」'),
+  stickerReplyEnabled: z.boolean().default(true)
+    .description('表情包掷骰（本地加 2026-11-18）：true = 按概率提示模型在本轮回一个表情包'),
+  stickerReplyProb: z.number().min(0).max(1).default(0.39)
+    .description('表情包概率（0–1，默认 0.39）：与语音条互斥，先掷语音再掷表情包'),
+  stickerRoot: z.string().default('')
+    .description('表情包库根目录（下面分「已审核」=聊天可挑、「未审核」=待审两个子目录）；留空 = <dsh-home>/dsh-onebot-genji/stickers'),
+  stickerAutoCollect: z.boolean().default(true)
+    .description('表情包自动收集（本地加 2026-11-19）：每 5 分钟扫一次入站媒体目录，新图先收进「未审核」；聊天里发表情只从已审核的图里挑'),
+  proactive: z.object({
     enabled: z.boolean().default(true)
-      .description('qq_send_segments 分段发送工具开关（T14）：true（默认）=工具可用；false=工具下线（模型不可见，无法调用）'),
-    intervalMs: z.number().min(0).max(3000).default(0)
-      .description('分段消息相邻两段的发送间隔（毫秒，0–3000，默认 0 = 不等待）：逐条发送之间的间隔营造打字呼吸感；qq_send_segments 的 intervalMs 参数可按次临时覆盖（同样截断到 0–3000）'),
+      .description('主动搭话（原 startup/qq-alive.mjs，2026-11-19 合并进插件）：主人安静一阵后由机器人主动发一条私聊消息；false = 完全关闭（不建实例、不占定时器、不花 token）'),
+    targetUsers: z.array(z.string()).default([])
+      .description('主动搭话发给谁：填 QQ 号或 private:<QQ号>，可填多个；留空 = 用 adminUsers 整个列表'),
+    minIdleMinutes: z.number().min(0).default(60)
+      .description('主人至少安静这么久才考虑开口（分钟）'),
+    minGapMinutes: z.number().min(0).default(90)
+      .description('距上次主动开口至少间隔这么久（分钟）'),
+    maxPerDay: z.number().min(0).default(6)
+      .description('每天最多主动开口几次（按本地日期重置）'),
+    quietFrom: z.number().min(0).max(23).default(22)
+      .description('安静时段起点（小时，含）——这段时间内不主动开口'),
+    quietTo: z.number().min(0).max(23).default(6)
+      .description('安静时段终点（小时，不含）'),
+    attemptGapMinutes: z.number().min(0).default(30)
+      .description('模型判定「没话头」或生成失败后，至少隔这么久再试一次（分钟）'),
+    burstProb: z.number().min(0).max(1).default(0.5)
+      .description('开口时拆成 2~3 条连着发的概率（0–1）'),
+    followupEnabled: z.boolean().default(true)
+      .description('聊完补话：主人刚说完、你也回完了，隔一会儿再判断一次要不要补一句'),
+    followupMinSec: z.number().min(0).default(45)
+      .description('聊完补话的窗口起点（秒）'),
+    followupMaxSec: z.number().min(0).default(180)
+      .description('聊完补话的窗口终点（秒）'),
+    followupProb: z.number().min(0).max(1).default(0.3)
+      .description('补话窗口内掷骰通过的概率（0–1）'),
+    followupMaxPerDay: z.number().min(0).default(3)
+      .description('每天最多补话几次'),
   }).default({})
-    .description('qq_send_segments 分段发送配置（T14）；缺省 = 启用且无间隔（与 0.9.10 行为一致）'),
+    .description('主动搭话（合并自 startup/qq-alive.mjs，2026-11-19）：机器人自己判断要不要主动找主人说话'),
   rateLimitPerMinute: z.number().default(30)
     .description('每 chat 每分钟允许的普通消息条数上限（60 秒滑动窗口）；命令消息不计入也不受限；超限时每窗口最多提示一次；0=禁用频控'),
   restrictedMemberPrefix: z.boolean().default(true)
@@ -483,7 +551,7 @@ export const Config: Z<Config> = z.object({
     .description('权限分档：群聊会话的 agent 预设 id（粗档）——设置后群聊优先使用它，私聊仍用 agentPreset；留空 = 群私同源'),
   permissions: z.object({
     memberTools: z.union([z.const('none'), z.const('send'), z.const('all')]).default('none')
-      .description('成员档位（非管理员）的工具权限：none=成员回合禁用全部 qq_* 工具（默认，插件硬拦截）；send=仅放行发往当前会话的内容类工具（qq_send_text / qq_send_segments / qq_send_image，发图可用会话工作区图库）；all=不限'),
+      .description('成员档位（非管理员）的工具权限：none=成员回合禁用全部 qq_* 工具（默认，插件硬拦截）；send=仅放行发往当前会话的内容类工具（qq_send_text / qq_send_image，发图可用会话工作区图库）；all=不限'),
   }),
   workspacePath: z.string().default('')
     .description('QQ 会话的工作区目录（写入会话 cwd，并自动归入该工作区，不存在则创建）；留空时使用宿主进程工作目录并在启动时告警提醒（宿主未提供可编程查询的默认工作区），单聊 /workspace 覆盖优先且已持久化到会话映射文件，重启/恢复失败均不丢失'),
@@ -522,7 +590,7 @@ export const Config: Z<Config> = z.object({
   dedupWindowSeconds: z.number().default(300)
     .description('入站消息去重窗口（秒，W2-②）：同一会话内相同 message_id 在该窗口内重投（断线重连重放等）只处理第一条，后续静默跳过并记 debug；仅对会触发回复处理的消息事件生效（notice/meta 类不经过此闸）；0 = 禁用去重'),
   actionRatePerMinute: z.number().default(20)
-    .description('主动写操作每分钟全桥合计上限（W2-③）：约束 qq_send_image/voice/video/file/segments 与 qq_send_forward 等工具发起的主动发送（回合内的被动回复/interim/通知不受此闸，由 rateLimitPerMinute 与离线队列上限约束）；超限拒发并记 warn 与审计；0 = 禁用分钟限额'),
+    .description('主动写操作每分钟全桥合计上限（W2-③）：约束 qq_send_image/voice/video/file 与 qq_send_forward 等工具发起的主动发送（回合内的被动回复/interim/通知不受此闸，由 rateLimitPerMinute 与离线队列上限约束）；超限拒发并记 warn 与审计；0 = 禁用分钟限额'),
   actionRatePerDay: z.number().default(500)
     .description('主动写操作每日（本地自然日）全桥合计上限（W2-③）：口径同 actionRatePerMinute；超限拒发并记 warn 与审计，次日自动恢复；0 = 禁用日限额'),
   actionAuditEnabled: z.boolean().default(true)
@@ -609,9 +677,8 @@ export function apply(ctx: Context, config: Config): void {
   // T6 (PR port faceStyle)：[CQ:face] 呈现风格是模块级解析行为（cq.ts
   // faceToEmoji），apply 时接线一次；非法值由 setFaceStyle 回落 'name'。
   setFaceStyle(config.faceStyle)
-  // T14: qq_send_segments 插件页开关与发送间隔——必须在任何 agent scope 注册
-  // 工具（bridge.installChannelScope → registerTools）之前生效。
-  configureSendSegments(config.segments)
+  // 2026-11-19 主人要求：qq_send_segments 工具下线（分段由 outbound 的
+  // splitIntoBubbles 自动切气泡），ConfigureSendSegments 那一套也一并去掉。
   const mediaDir = config.mediaDir !== '' ? config.mediaDir : defaultMediaDir()
   const policy = resolvePolicy(config)
   /** Console log line callback (level, message) — shared by the bridge deps,
@@ -622,6 +689,23 @@ export function apply(ctx: Context, config: Config): void {
     if (level === 'error') console.error(prefix + message)
     else if (level === 'warn') console.warn(prefix + message)
     else console.log(prefix + message)
+  }
+  // 表情包库（2026-11-19 本地加）：根目录来自配置，自动收集只把新图丢进「未审核」，
+  // 不调模型、不占显存；审核在设置页点按钮时才走宿主模型看图打标签。
+  const stickerRoot = config.stickerRoot !== '' ? config.stickerRoot : DEFAULT_STICKER_ROOT
+  type StickerStoreInstance = InstanceType<typeof StickerStore>
+  let stickerStore: StickerStoreInstance | undefined
+  const stickerStoreOf = (): StickerStoreInstance => {
+    if (stickerStore === undefined) {
+      stickerStore = new StickerStore({
+        root: stickerRoot,
+        log: (level: string, message: string) => {
+          const lv = level === 'warn' || level === 'error' || level === 'debug' ? level : 'info'
+          log(lv, '[stickers] ' + message)
+        },
+      })
+    }
+    return stickerStore
   }
   // T3 方案 B: the host exposes no queryable default workspace —
   // WorkspaceRegistry has no default getter and the session controller's
@@ -674,6 +758,8 @@ export function apply(ctx: Context, config: Config): void {
     timeoutMs: config.sttTimeoutMs,
   })
   connection.onMessage = (event: OneBotEvent) => {
+    // 主动搭话（2026-11-19 合并进插件）：记「主人最后说话时间」，只认目标私聊。
+    proactive?.noteInbound(event)
     void bridge.handleInbound(event)
   }
   connection.onMeta = (event: OneBotEvent) => {
@@ -784,6 +870,12 @@ export function apply(ctx: Context, config: Config): void {
       sendErrorNotice: config.sendErrorNotice,
       notices: config.notices,
       rateLimitPerMinute: config.rateLimitPerMinute,
+      // 回合形式掷骰 + 表情包（本地加 2026-11-19）：面板上的开关/概率在这里进 bridge。
+      voiceReplyEnabled: config.voiceReplyEnabled,
+      voiceReplyProb: config.voiceReplyProb,
+      stickerReplyEnabled: config.stickerReplyEnabled,
+      stickerReplyProb: config.stickerReplyProb,
+      stickerRoot,
       restrictedMemberPrefix: config.restrictedMemberPrefix,
       sensitivePatterns: config.sensitivePatterns,
       mediaDir,
@@ -831,6 +923,50 @@ export function apply(ctx: Context, config: Config): void {
   // share the same number for one fault.
   connection.onFailure = (stage: string, detail: string): string => bridge.registerConnectionFailure(stage, detail)
 
+  // 主动搭话（2026-11-19：原 startup/qq-alive.mjs 合并进插件）。开关在
+  // Config.proactive.enabled；关着就完全不建实例——没有定时器、不发请求。
+  /** 主动搭话的生成通道：用「当前会话的模型」（agentDefaultModel 的选择）跑一次纯文本
+   *  补全。2026-11-19 主人要求：不再配接口地址/模型名/接口 Key，一律跟随会话模型。 */
+  const proactiveGenerateText = async (prompt: string, options: { signal?: AbortSignal } = {}): Promise<string> => {
+    const selection = ctx.agentDefaultModel.currentSelection()
+    if (selection === undefined) throw new Error('没有可用的会话模型（agentDefaultModel.currentSelection() 为空）')
+    const call = await ctx.llm.prepareCall(
+      { provider: selection.provider, model: selection.model, maxTokens: 1500 },
+      options.signal,
+    )
+    const userMessage = createUserMessage({
+      content: [{ type: 'text', text: prompt }],
+      source: PROACTIVE_MESSAGE_SOURCE,
+    })
+    const assembler = new BlockAssembler()
+    for await (const chunk of call.stream({
+      ...call.config,
+      messages: [userMessage],
+      purpose: 'dsh-onebot-proactive',
+      signal: options.signal,
+    } as never))
+      assembler.push(chunk as never)
+    return assembler
+      .blocks()
+      .filter((block) => block.type === 'text')
+      .map((block) => (block as { text: string }).text)
+      .join('')
+      .trim()
+  }
+  type ProactiveTalkInstance = InstanceType<typeof ProactiveTalk>
+  let proactive: ProactiveTalkInstance | undefined
+  if (config.proactive?.enabled !== false) {
+    proactive = new ProactiveTalk({
+      config,
+      bridge: bridge as unknown as import('./proactive.js').ProactiveBridgeLike,
+      log,
+      dshHome: dshHome(),
+      generateText: proactiveGenerateText,
+    })
+  }
+  /** 表情包自动收集的定时器（开关关掉时不建）。 */
+  let stickerTimer: ReturnType<typeof setInterval> | undefined
+
   // Lifecycle: start the bridge and transport; unwind everything on unload.
   // The effect body is async (cordis AsyncEffect): injectChannel.start() must
   // be awaited — it skips history before arming its poll timer, and a stop
@@ -857,14 +993,32 @@ export function apply(ctx: Context, config: Config): void {
       // no log, fiber stays active). Surface the failure and unwind the
       // already-started chain (same order as the disposer) before rethrowing.
       log('error', 'dsh-onebot 启动失败: ' + describeError(error))
+      if (stickerTimer !== undefined) clearInterval(stickerTimer)
       await injectChannel?.stop()
       await bridge.stop()
       await connection.stop()
       throw error
     }
     console.log('[dsh-onebot] mounted' + mountDetails)
+    // 表情包自动收集（2026-11-19 本地加）：每 5 分钟扫一次入站媒体目录，新图只进
+    // 「未审核」；不调模型、不占显存。关掉开关就连定时器都不建。
+    if (config.stickerAutoCollect !== false) {
+      const collectOnce = (): void => {
+        try {
+          const result = stickerStoreOf().collect(mediaDir)
+          if (result.added > 0) log('info', '[stickers] 自动收集 ' + result.added + ' 张进未审核')
+        } catch (error) {
+          log('warn', '[stickers] 自动收集失败: ' + describeError(error))
+        }
+      }
+      collectOnce()
+      stickerTimer = setInterval(collectOnce, 300_000)
+      stickerTimer.unref?.()
+    }
     // QQ 平台说明与 qq_* 工具现按会话 agent 注入（见 ChatBridge.installChannelScope）
     return async () => {
+      if (stickerTimer !== undefined) clearInterval(stickerTimer)
+      proactive?.stop()
       await injectChannel?.stop()
       await bridge.stop()
       await connection.stop()

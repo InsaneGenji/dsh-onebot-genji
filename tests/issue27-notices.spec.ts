@@ -169,7 +169,10 @@ describe('notices.answerAccepted', () => {
     await vi.waitFor(() => expect(sentTexts(h.outbound).some(t => t.includes('回复编号或字母选择'))).toBe(true))
     h.sendText('1,2')
     await vi.waitFor(() => expect(answer).toHaveBeenCalledTimes(1))
-    await vi.waitFor(() => expect(sentTexts(h.outbound).some(t => t.includes('自定义回答回执'))).toBe(true))
+    // 2026-11-19 正文自动切气泡：提问卡片本身是多行文本，会拆成最多 4 条独立
+    // 气泡、条间 800–1500ms 停顿，同一聊天的发送链串行——回执排在卡片气泡之后，
+    // 默认 1000ms 的 waitFor 等不到它。
+    await vi.waitFor(() => expect(sentTexts(h.outbound).some(t => t.includes('自定义回答回执'))).toBe(true), { timeout: 20_000 })
     expect(sentTexts(h.outbound).some(t => t.includes(ANSWER_ACCEPTED_NOTICE))).toBe(false)
     h.client.close()
     await h.bridge.stop()

@@ -465,3 +465,74 @@ export const inboundAndDisconnect = async (h: Awaited<ReturnType<typeof makeHarn
 
 export const sentTexts = (outbound: Array<Record<string, unknown>>): string[] =>
   outbound.filter(f => f.action === 'send_msg').map(f => JSON.stringify(f.params))
+
+/**
+ * 2026-11-19 正文自动切气泡：一轮回复会拆成最多 4 条独立 send_msg，条间有
+ * 800–1500ms 的拟人停顿，而且同一聊天的发送链是串行的——所以「这条命令的
+ * 回复里包含 X」这类断言不能再只看第一条。下面两个帮手先把这一批气泡等完，
+ * 再对全部已发消息的文本做聚合断言。
+ */
+export const outboundTextAll = (outbound: Array<Record<string, unknown>>): string =>
+  outbound.map(f => JSON.stringify(f.params)).join('\n')
+
+/**
+ * 只把各条消息里的 text 段按 '' 拼起来。气泡切分是在换行 / 句末标点处断的，
+ * 拼回去就是原文——「回复里连着包含某句话」这类断言必须用它：直接 join 整个
+ * params 会在两条气泡之间夹进 JSON 胶水，跨气泡的句子永远匹配不到。
+ */
+export const outboundTextJoined = (outbound: Array<Record<string, unknown>>): string =>
+  outbound
+    .filter(f => f.action === 'send_msg')
+    .flatMap(f => (f.params.message as Array<{ type: string; data: { text?: string } }> | undefined) ?? [])
+    .filter(s => s.type === 'text')
+    .map(s => s.data.text ?? '')
+    .join('')
+
+type ChainHost = {
+  bridge: {
+    chainTail?: (chatId: string) => Promise<unknown>
+    /** OutboundPipeline：每个聊天一条串行发送链，气泡停顿也在链里。 */
+    outbound?: { chainTail: (chatId: string) => Promise<unknown> }
+  }
+}
+
+/**
+ * 等这批气泡发完：先等这个聊天的发送链排空（气泡之间的 800–1500ms 停顿也
+ * 在链里，尾部 resolve 就等于全部发完），再补一小段静默期兜住「命令还在
+ * 处理、回复尚未入链」的情形。
+ */
+export async function settleOutbound(
+  h: ChainHost,
+  options: { chatIds?: string[]; graceMs?: number; timeoutMs?: number } = {},
+): Promise<void> {
+  const ids = options.chatIds ?? ['private:10001', 'private:20002', 'group:888']
+  const graceMs = options.graceMs ?? 600
+  const deadline = Date.now() + (options.timeoutMs ?? 30_000)
+  const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+  const tail = (id: string): Promise<unknown> => {
+    const pipeline = (h.bridge as ChainHost['bridge']).outbound
+    if (pipeline !== undefined && typeof pipeline.chainTail === 'function') {
+      try {
+        return Promise.resolve(pipeline.chainTail(id))
+      } catch {
+        return Promise.resolve()
+      }
+    }
+    try {
+      return Promise.resolve(h.bridge.chainTail?.(id))
+    } catch {
+      return Promise.resolve()
+    }
+  }
+  for (;;) {
+    await Promise.all(ids.map(id => tail(id)))
+    await sleep(graceMs)
+    let busy = false
+    for (const id of ids) {
+      const probe = tail(id)
+      const settled = await Promise.race([probe.then(() => true), sleep(0).then(() => false)])
+      if (settled === false) busy = true
+    }
+    if (!busy || Date.now() > deadline) return
+  }
+}

@@ -1,6 +1,99 @@
 declare const window: any;
 declare const document: any;
 /**
+ * 2026-11-19（本地加）：表情包库面板用到的浏览器侧最小接口声明。
+ * 本 bundle 的 tsconfig lib 只有 ES2024（无 DOM），故在文件顶声明 / 类型收窄，
+ * 避免 strict 下引入 any 或依赖 DOM lib（宿主浏览器恒有这些全局）。
+ */
+declare const FileReader: {
+	new (): { result: unknown; onload: (() => void) | null; onerror: (() => void) | null; readAsDataURL(file: unknown): void };
+};
+declare const IntersectionObserver: {
+	new (callback: (entries: readonly { isIntersecting?: boolean; target: { getAttribute(name: string): string | null } }[]) => void, options?: { rootMargin?: string }): {
+		observe(node: unknown): void;
+		unobserve(node: unknown): void;
+		disconnect(): void;
+	};
+};
+/** 表情包条目（字段逐字对齐 host 侧 listStickers 的 items）。 */
+interface StickerItemLike {
+	hash: string;
+	file: string;
+	approved: boolean;
+	dir: string;
+	tags: string[];
+	description: string;
+	bytes: number;
+	addedAt: number;
+	exists: boolean;
+}
+/** 表情包库统计（host snapshotOf 的 stats）。 */
+interface StickerStatsLike {
+	total: number;
+	approved: number;
+	pending: number;
+	bytes: number;
+	root: string;
+}
+/** 单张审核 / 重新识别结果（host retagStickers 的 results 元素）。 */
+interface StickerResultLike {
+	hash: string;
+	ok: boolean;
+	description?: string;
+	tags?: string[];
+	reason?: string;
+}
+/** listStickers / addSticker / approve… 的统一返回快照。 */
+interface StickerSnapshotLike {
+	ok: boolean;
+	root: string;
+	autoCollect: boolean;
+	approvedDir: string;
+	pendingDir: string;
+	stats: StickerStatsLike;
+	items: StickerItemLike[];
+	error?: unknown;
+	results?: StickerResultLike[];
+	added?: { added: boolean; reason?: string; item?: StickerItemLike };
+	removed?: { hash: string; ok: boolean }[];
+}
+/** readSticker 返回（dataUrl 走 MIME base64；超限只回 tooLarge）。 */
+interface StickerImageLike {
+	ok: boolean;
+	hash: string;
+	dataUrl?: string;
+	bytes?: number;
+	mime?: string;
+	tooLarge?: boolean;
+}
+/** 面板用到的 remote 方法面（真身是 host remote.onebotSettings；这里只声明用到的方法）。 */
+interface StickerRemoteLike {
+	listStickers(): unknown;
+	addSticker(name: string, dataUrl: string): unknown;
+	deleteSticker(hashes: string[]): unknown;
+	approveStickers(hashes: string[]): unknown;
+	unapproveStickers(hashes: string[]): unknown;
+	retagStickers(hashes: string[]): unknown;
+	readSticker(hash: string): unknown;
+	updateSticker(hash: string, patch: { description?: string; tags?: string[] }): unknown;
+}
+/** 面板里用到的最小事件形状（change / click / keydown / 上传）。 */
+interface StickerPanelEvent {
+	target: { value: string; files?: ArrayLike<unknown> | null };
+	key?: string;
+	/** 2026-11-19：编辑框改成多行 textarea 后，靠 Ctrl/⌘+Enter 保存。 */
+	ctrlKey?: boolean;
+	metaKey?: boolean;
+	preventDefault(): void;
+	stopPropagation(): void;
+}
+/** StickerPanel 的 props（ui 只需 Button 与 ImageLightbox 两个能力）。 */
+interface StickerPanelProps {
+	remote: StickerRemoteLike;
+	ui: { Button: unknown; ImageLightbox?: unknown };
+	onNotify?: (message: string, isError?: boolean) => void;
+}
+/**
  * dsh-onebot — client bundle（QQ Bot 设置面板，T8 · 贡献者 0.9.19 版重写）
  *
  * 结构模板：dsh-expert-orchestrator/lib/client.js（CJS 包裹 + slots/remote 挂载模式），
@@ -155,9 +248,30 @@ window.__ModuleLoader__.load({
 			{
 				id: "behavior",
 				title: "行为",
+				// 2026-11-19（本地加）：行为分「通用 / 私聊」两块。「@notices」是占位键——
+				// 渲染到这一格时把上面攒的通知段插进来（通知条目紧跟在「合并等待窗口」之后）。
+				sections: [
+					{ id: "common", title: "通用", keys: [
+						"rateLimitPerMinute", "voiceReplyEnabled", "voiceReplyProb", "stickerReplyEnabled", "stickerReplyProb",
+						"interimMessages", "interimRecall", "interimRecallMs", "sendErrorNotice", "unknownCommand",
+						"newMessagePolicy", "autoSteerPolicy", "deferredTimeoutMs", "inboxQueueEnabled", "inboxQueueDelayMs",
+						"@notices",
+					] },
+					{ id: "dm", title: "私聊", keys: [
+						"proactiveEnabled", "proactiveTargetUsers", "proactiveMinIdleMinutes", "proactiveMinGapMinutes",
+						"proactiveMaxPerDay", "proactiveQuietFrom", "proactiveQuietTo", "proactiveAttemptGapMinutes",
+						"proactiveBurstProb", "proactiveFollowupEnabled", "proactiveFollowupMinSec",
+						"proactiveFollowupMaxSec", "proactiveFollowupProb", "proactiveFollowupMaxPerDay",
+					] },
+				],
 				fields: [
 					// T7 转正：入站连发合并（开关默认关；合并窗口 600ms，首条起最多 3000ms 封顶）。
 					{ key: "rateLimitPerMinute", label: "每分钟消息频率上限", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数" },
+					// 2026-11-19（本地加）：回合形式掷骰改配置（原写死语音 10%、表情包 39%）。
+					{ key: "voiceReplyEnabled", label: "回复转成语音", type: "boolean", hint: "开着才有概率把一回合的回复变成语音条" },
+					{ key: "voiceReplyProb", label: "语音概率", type: "number", hint: "0–1 之间的小数，默认 0.1（10%）", showIf: { key: "voiceReplyEnabled", value: true } },
+					{ key: "stickerReplyEnabled", label: "发表情包", type: "boolean", hint: "开着才有概率在回复里带一张表情包" },
+					{ key: "stickerReplyProb", label: "表情包概率", type: "number", hint: "0–1 之间的小数，默认 0.39（39%）", showIf: { key: "stickerReplyEnabled", value: true } },
 					{ key: "unknownCommand", label: "未知命令处理", type: "enum", options: ["intercept", "passthrough"], optionLabels: { intercept: "拦截", passthrough: "透传" } },
 					{ key: "newMessagePolicy", label: "任务运行中的新消息", type: "enum", options: ["queue", "steer"], optionLabels: { queue: "排队", steer: "插话" } },
 					{ key: "autoSteerPolicy", label: "自动插话资格",  showIf: { key: "newMessagePolicy", value: "steer" }, type: "enum", options: ["admin", "all"], optionLabels: { admin: "仅管理员", all: "所有成员" } },
@@ -168,9 +282,36 @@ window.__ModuleLoader__.load({
 					{ key: "interimRecallMs", label: "中间消息保留时长（毫秒）",  showIf: { key: "interimRecall", value: true }, type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数" },
 					{ key: "sendErrorNotice", label: "发送错误通知", type: "boolean" },
 					{ key: "deferredTimeoutMs", label: "等待模型回复超时（毫秒）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数" },
+					// 2026-11-19（本地加）：主动搭话——排在「行为 → 私聊」分区（原来在「权限 → 私聊」）。
+					// 原文在 lib/proactive.js，配置读宿主 Config.proactive（面板键带 proactive 前缀）。
+					{ key: "proactiveEnabled", label: "主动搭话", type: "boolean", hint: "隔一阵自己来找你（安静时段和频率都由下面几项控制）" },
+					{ key: "proactiveTargetUsers", label: "搭话目标用户", type: "stringArray", hint: "留空等于管理员列表", showIf: { key: "proactiveEnabled", value: true } },
+					{ key: "proactiveMinIdleMinutes", label: "你安静多久才搭话（分钟）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", showIf: { key: "proactiveEnabled", value: true } },
+					{ key: "proactiveMinGapMinutes", label: "两次搭话最小间隔（分钟）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", showIf: { key: "proactiveEnabled", value: true } },
+					{ key: "proactiveMaxPerDay", label: "每天最多搭话次数", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", showIf: { key: "proactiveEnabled", value: true } },
+					{ key: "proactiveQuietFrom", label: "安静时段起（小时）", type: "number", pattern: "^[0-9]+$", patternHint: "0–23 的整数", hint: "这段时间内不发；起止填一样 = 不设安静时段", showIf: { key: "proactiveEnabled", value: true } },
+					{ key: "proactiveQuietTo", label: "安静时段止（小时）", type: "number", pattern: "^[0-9]+$", patternHint: "0–23 的整数", showIf: { key: "proactiveEnabled", value: true } },
+					{ key: "proactiveAttemptGapMinutes", label: "判定间隔（分钟）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", hint: "每次判定要不要发话的最小间隔", showIf: { key: "proactiveEnabled", value: true } },
+					{ key: "proactiveBurstProb", label: "连发概率", type: "number", hint: "0–1 之间的小数，比如 0.5；越大越容易一次说两三句", showIf: { key: "proactiveEnabled", value: true } },
+					{ key: "proactiveFollowupEnabled", label: "补一句话", type: "boolean", hint: "你先开口后，过一小会儿再补一句", showIf: { key: "proactiveEnabled", value: true } },
+					{ key: "proactiveFollowupMinSec", label: "补话最短等待（秒）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", showIf: { key: "proactiveFollowupEnabled", values: [true] } },
+					{ key: "proactiveFollowupMaxSec", label: "补话最长等待（秒）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", showIf: { key: "proactiveFollowupEnabled", values: [true] } },
+					{ key: "proactiveFollowupProb", label: "补话概率", type: "number", hint: "0–1 之间的小数", showIf: { key: "proactiveFollowupEnabled", values: [true] } },
+					{ key: "proactiveFollowupMaxPerDay", label: "补话每天上限", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", showIf: { key: "proactiveFollowupEnabled", values: [true] } },
 					// T11：DSH 首页左侧边栏入口开关（关=不注册侧边栏入口与配对面板；
 					// 插件菜单下的设置页入口保留。客户端按启动时快照决定，改完刷新生效）。
 														],
+			},
+			{
+				// 2026-11-19（本地加）：表情包库。上面两个是配置项，下面挂一块自定义
+				// 「表情包库」面板（列表/新增/删除/审核），走 remote 方法不占键表。
+				id: "stickers",
+				title: "表情包",
+				desc: "表情包管理",
+				fields: [
+					{ key: "stickerAutoCollect", label: "自动收集表情包", type: "boolean", hint: "收到的新图自动收进「未审核」，不会直接进聊天" },
+					{ key: "stickerRoot", label: "表情包库目录", type: "string", placeholder: "留空 = %USERPROFILE%\\.dsh\\dsh-onebot-genji\\stickers", hint: "里面有「已审核」（聊天只从这里挑图）与「未审核」两个子目录" },
+				],
 			},
 			{
 				id: "session",
@@ -282,6 +423,27 @@ window.__ModuleLoader__.load({
 			sendErrorNotice: false,
 			unknownCommand: "intercept",
 			rateLimitPerMinute: 30,
+			voiceReplyEnabled: true,
+			voiceReplyProb: 0.1,
+			stickerReplyEnabled: true,
+			stickerReplyProb: 0.39,
+			stickerAutoCollect: true,
+			stickerRoot: "",
+			// 2026-11-19（本地加）：主动搭话（宿主 Config.proactive 的扁平镜像）。
+			proactiveEnabled: true,
+			proactiveTargetUsers: [],
+			proactiveMinIdleMinutes: 60,
+			proactiveMinGapMinutes: 90,
+			proactiveMaxPerDay: 6,
+			proactiveQuietFrom: 22,
+			proactiveQuietTo: 6,
+			proactiveAttemptGapMinutes: 30,
+			proactiveBurstProb: 0.5,
+			proactiveFollowupEnabled: true,
+			proactiveFollowupMinSec: 45,
+			proactiveFollowupMaxSec: 180,
+			proactiveFollowupProb: 0.3,
+			proactiveFollowupMaxPerDay: 3,
 			newMessagePolicy: "steer",
 			autoSteerPolicy: "admin",
 			deferredTimeoutMs: 600000,
@@ -467,6 +629,9 @@ window.__ModuleLoader__.load({
 			dmPromptFile: vString(0, 1024),
 			groupPromptFile: vString(0, 1024),
 			groupContextLines: vNumber(),
+			// 本地加（2026-11-19）：群聊 @ 表情回执两键（index.ts 早已有 schema，面板这条一直缺）。
+			reactionOnMention: vBoolean(),
+			reactionEmoji: vNumber(0, 1000),
 			requireMention: vBoolean(),
 			memberTools: vEnum(["none", "send", "all"]),
 			bystanderEnabled: vBoolean(),
@@ -492,6 +657,12 @@ window.__ModuleLoader__.load({
 			sendErrorNotice: vBoolean(),
 			unknownCommand: vEnum(["intercept", "passthrough"]),
 			rateLimitPerMinute: vNumber(),
+			voiceReplyEnabled: vBoolean(),
+			voiceReplyProb: vNumber(0, 1),
+			stickerReplyEnabled: vBoolean(),
+			stickerReplyProb: vNumber(0, 1),
+			stickerAutoCollect: vBoolean(),
+			stickerRoot: vString(0, 512),
 			newMessagePolicy: vEnum(["queue", "steer"]),
 			autoSteerPolicy: vEnum(["admin", "all"]),
 			deferredTimeoutMs: vNumber(),
@@ -536,6 +707,21 @@ window.__ModuleLoader__.load({
 			inboxQueueDelayMs: vNumber(),
 			// T24：QQ 会话标题同步开关。
 			titleSyncEnabled: vBoolean(),
+			// 2026-11-19（本地加）：主动搭话 17 键（不在此声明会被网关剥掉）。
+			proactiveEnabled: vBoolean(),
+			proactiveTargetUsers: vArray(vString(0, 64)),
+			proactiveMinIdleMinutes: vNumber(),
+			proactiveMinGapMinutes: vNumber(),
+			proactiveMaxPerDay: vNumber(),
+			proactiveQuietFrom: vNumber(),
+			proactiveQuietTo: vNumber(),
+			proactiveAttemptGapMinutes: vNumber(),
+			proactiveBurstProb: vNumber(),
+			proactiveFollowupEnabled: vBoolean(),
+			proactiveFollowupMinSec: vNumber(),
+			proactiveFollowupMaxSec: vNumber(),
+			proactiveFollowupProb: vNumber(),
+			proactiveFollowupMaxPerDay: vNumber(),
 			notices: vObject({
 				steerAccepted: vNoticeValue(),
 				queue: vNoticeValue(),
@@ -574,6 +760,10 @@ window.__ModuleLoader__.load({
 			forceSessionId: vOptional(vString(0, 256)),
 			dmPromptFile: vOptional(vString(0, 1024)),
 			groupPromptFile: vOptional(vString(0, 1024)),
+			// 本地加（2026-11-19）：这三个键补进 patchSchema，否则网关按 schema 剥键、面板改了也不落盘。
+			groupContextLines: vOptional(vNumber(0, 200)),
+			reactionOnMention: vOptional(vBoolean()),
+			reactionEmoji: vOptional(vNumber(0, 1000)),
 			allowPrivateHosts: vOptional(vBoolean()),
 			ignoreSelf: vOptional(vBoolean()),
 			sidebarEntryEnabled: vOptional(vBoolean()),
@@ -604,6 +794,12 @@ window.__ModuleLoader__.load({
 			sendErrorNotice: vOptional(vBoolean()),
 			unknownCommand: vOptional(vEnum(["intercept", "passthrough"])),
 			rateLimitPerMinute: vOptional(vNumber(0)),
+			voiceReplyEnabled: vOptional(vBoolean()),
+			voiceReplyProb: vOptional(vNumber(0, 1)),
+			stickerReplyEnabled: vOptional(vBoolean()),
+			stickerReplyProb: vOptional(vNumber(0, 1)),
+			stickerAutoCollect: vOptional(vBoolean()),
+			stickerRoot: vOptional(vString(0, 512)),
 			newMessagePolicy: vOptional(vEnum(["queue", "steer"])),
 			autoSteerPolicy: vOptional(vEnum(["admin", "all"])),
 			deferredTimeoutMs: vOptional(vNumber(0)),
@@ -642,6 +838,21 @@ window.__ModuleLoader__.load({
 			inboxRedact: vOptional(vBoolean()),
 			injectEnabled: vOptional(vBoolean()),
 			injectDryRun: vOptional(vBoolean()),
+			// 2026-11-19（本地加）：主动搭话 17 键（缺声明 = 编辑被静默丢弃）。
+			proactiveEnabled: vOptional(vBoolean()),
+			proactiveTargetUsers: vOptional(vArray(vString(0, 64))),
+			proactiveMinIdleMinutes: vOptional(vNumber(0, 1440)),
+			proactiveMinGapMinutes: vOptional(vNumber(0, 1440)),
+			proactiveMaxPerDay: vOptional(vNumber(1, 48)),
+			proactiveQuietFrom: vOptional(vNumber(0, 23)),
+			proactiveQuietTo: vOptional(vNumber(0, 23)),
+			proactiveAttemptGapMinutes: vOptional(vNumber(0, 1440)),
+			proactiveBurstProb: vOptional(vNumber(0, 1)),
+			proactiveFollowupEnabled: vOptional(vBoolean()),
+			proactiveFollowupMinSec: vOptional(vNumber(0, 3600)),
+			proactiveFollowupMaxSec: vOptional(vNumber(0, 3600)),
+			proactiveFollowupProb: vOptional(vNumber(0, 1)),
+			proactiveFollowupMaxPerDay: vOptional(vNumber(0, 48)),
 			notices: vOptional(vObject({
 				steerAccepted: vNoticeValue(),
 				queue: vNoticeValue(),
@@ -679,6 +890,56 @@ window.__ModuleLoader__.load({
 				result: strictCodec(typeSymbol != null ? typeSymbol : "OnebotSettingsSnapshot", resultSchema || snapshotSchema),
 			};
 		}
+		// 2026-11-19（本地加）：表情包库 remote 方法的返回 schema
+		//  （与 host lib/settings-remote.js 的 snapshotOf / readImage 结构逐字对齐）。
+		var stickerItemSchema = vObject({
+			hash: vString(1, 64),
+			file: vString(0, 256),
+			approved: vBoolean(),
+			dir: vString(0, 64),
+			tags: vArray(vString(0, 256)),
+			description: vString(0, 8192),
+			bytes: vInt(0),
+			addedAt: vInt(0),
+			exists: vBoolean(),
+		});
+		var stickerStatsSchema = vObject({
+			total: vInt(0),
+			approved: vInt(0),
+			pending: vInt(0),
+			bytes: vInt(0),
+			root: vString(0, 1024),
+		});
+		var stickerResultSchema = vObject({
+			hash: vString(0, 64),
+			ok: vBoolean(),
+			description: vOptional(vString(0, 8192)),
+			tags: vOptional(vArray(vString(0, 256))),
+		});
+		var stickerSnapshotSchema = vObject({
+			ok: vBoolean(),
+			root: vString(0, 1024),
+			autoCollect: vBoolean(),
+			approvedDir: vString(0, 1024),
+			pendingDir: vString(0, 1024),
+			stats: stickerStatsSchema,
+			items: vArray(stickerItemSchema),
+			added: vOptional(vObject({
+				added: vBoolean(),
+				reason: vOptional(vString(0, 256)),
+				item: vOptional(stickerItemSchema),
+			})),
+			removed: vOptional(vArray(vObject({ hash: vString(0, 64), ok: vBoolean() }))),
+			results: vOptional(vArray(stickerResultSchema)),
+		});
+		var stickerImageSchema = vObject({
+			ok: vBoolean(),
+			hash: vString(0, 64),
+			dataUrl: vOptional(vString(0, 20_000_000)),
+			bytes: vOptional(vInt(0)),
+			mime: vOptional(vString(0, 64)),
+			tooLarge: vOptional(vBoolean()),
+		});
 		var ONEBOT_SETTINGS_DESCRIPTORS = [
 			onebotMethod("getSettings", []),
 			onebotMethod("updateSettings", [
@@ -686,6 +947,24 @@ window.__ModuleLoader__.load({
 				jsonParameter("expectedRevision", "number", vOptional(vInt(0))),
 			]),
 			onebotMethod("listWorkspaces", [], workspaceListSchema, "WorkspaceListResult"),
+			// 2026-11-19（本地加）：表情包库（列表 / 新增 / 删除 / 审核 / 撤回 / 看图 / 重新识别 / 改描述）。
+			onebotMethod("listStickers", [], stickerSnapshotSchema, "OnebotStickerSnapshot"),
+			onebotMethod("addSticker", [
+				jsonParameter("name", "string", vString(0, 256)),
+				jsonParameter("dataUrl", "string", vString(0, 20_000_000)),
+			], stickerSnapshotSchema, "OnebotStickerSnapshot"),
+			onebotMethod("deleteSticker", [jsonParameter("hashes", "string[]", vArray(vString(0, 64)))], stickerSnapshotSchema, "OnebotStickerSnapshot"),
+			onebotMethod("approveStickers", [jsonParameter("hashes", "string[]", vArray(vString(0, 64)))], stickerSnapshotSchema, "OnebotStickerSnapshot"),
+			onebotMethod("unapproveStickers", [jsonParameter("hashes", "string[]", vArray(vString(0, 64)))], stickerSnapshotSchema, "OnebotStickerSnapshot"),
+			onebotMethod("readSticker", [jsonParameter("hash", "string", vString(0, 64))], stickerImageSchema, "OnebotStickerImage"),
+			onebotMethod("retagStickers", [jsonParameter("hashes", "string[]", vArray(vString(0, 64)))], stickerSnapshotSchema, "OnebotStickerSnapshot"),
+			onebotMethod("updateSticker", [
+				jsonParameter("hash", "string", vString(0, 64)),
+				jsonParameter("patch", "object", vObject({
+					description: vOptional(vString(0, 8192)),
+					tags: vOptional(vArray(vString(0, 256))),
+				})),
+			], stickerSnapshotSchema, "OnebotStickerSnapshot"),
 		];
 		var ONEBOT_SETTINGS_REMOTE = { package: PLUGIN_ID, descriptors: ONEBOT_SETTINGS_DESCRIPTORS };
 		//#endregion
@@ -879,11 +1158,37 @@ window.__ModuleLoader__.load({
 					sendErrorNotice: { label: "Send error notices" },
 					unknownCommand: { label: "Unknown command handling", options: { intercept: "Intercept", passthrough: "Pass through" } },
 					rateLimitPerMinute: { label: "Per-minute message rate cap" },
+					voiceReplyEnabled: { label: "Reply as voice", hint: "When on, a turn may become a voice clip" },
+					voiceReplyProb: { label: "Voice probability", hint: "0–1, default 0.1 (10%)" },
+					stickerReplyEnabled: { label: "Reply with sticker", hint: "When on, a turn may include a sticker" },
+					stickerReplyProb: { label: "Sticker probability", hint: "0–1, default 0.39 (39%)" },
+					// 2026-11-19（本地加）：主动搭话英文词条（从权限组搬过来；缺了会回落 zh，插件启动时打警告）。
+					proactiveEnabled: { label: "Proactive messages", hint: "Come find you on my own after a while (quiet hours and frequency below)" },
+					proactiveTargetUsers: { label: "Proactive target users", hint: "Empty = the admin list" },
+					proactiveMinIdleMinutes: { label: "Idle minutes before reaching out" },
+					proactiveMinGapMinutes: { label: "Min gap between proactive messages (minutes)" },
+					proactiveMaxPerDay: { label: "Max proactive messages per day" },
+					proactiveQuietFrom: { label: "Quiet hours start (hour)", hint: "Nothing is sent in this window; same start and end = no quiet hours" },
+					proactiveQuietTo: { label: "Quiet hours end (hour)" },
+					proactiveAttemptGapMinutes: { label: "Decision interval (minutes)", hint: "Minimum gap between two decide-run checks" },
+					proactiveBurstProb: { label: "Burst probability", hint: "Decimal 0-1, e.g. 0.5; higher = more likely to send two or three lines at once" },
+					proactiveFollowupEnabled: { label: "Follow-up line", hint: "After you speak first, add one more line a bit later" },
+					proactiveFollowupMinSec: { label: "Follow-up min wait (seconds)" },
+					proactiveFollowupMaxSec: { label: "Follow-up max wait (seconds)" },
+					proactiveFollowupProb: { label: "Follow-up probability", hint: "Decimal 0-1" },
+					proactiveFollowupMaxPerDay: { label: "Follow-up daily cap" },
 					newMessagePolicy: { label: "New messages while a task runs", options: { queue: "Queue", steer: "Steer" } },
 					autoSteerPolicy: { label: "Auto-steer eligibility", options: { admin: "Admins only", all: "All members" } },
 					deferredTimeoutMs: { label: "Model reply wait timeout (ms)" },
 					inboxQueueEnabled: { label: "Inbound burst merging", hint: "Merge several messages burst-sent to one session into a single delivery" },
 					inboxQueueDelayMs: { label: "Merge wait window (ms)", hint: "Each message waits one window before delivery; 0 = immediately" },
+				},
+			},
+			stickers: {
+				title: "Stickers",
+				fields: {
+					stickerAutoCollect: { label: "Auto-collect stickers", hint: "New images land in Pending and never go into chats directly" },
+					stickerRoot: { label: "Sticker library root", placeholder: "Empty = %USERPROFILE%\\.dsh\\dsh-onebot-genji\\stickers", hint: "Holds 已审核 (approved — chats only pick from here) and 未审核 (pending)" },
 				},
 			},
 			session: {
@@ -1011,6 +1316,9 @@ window.__ModuleLoader__.load({
 			".obx-body{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:16px;padding:20px 24px 32px;-webkit-overflow-scrolling:touch}",
 			// 反馈行（原生表单语义：错误/成功为彩色文本行，不再是描边横幅）
 			".obx-effect{margin:0;color:var(--obx-fg-tertiary);font-size:12px;line-height:18px}",
+			// 本地改（2026-11-19）：热生效提示移到 navBar 上面，独占一行贴顶。
+			".obx-effect--top{flex:none;padding:20px 24px 0}",
+			".obx-effect--top+.obx-head{padding-top:10px}",
 			".obx-error{margin:0;color:var(--obx-error);font-size:12px;line-height:18px;white-space:pre-wrap}",
 			".obx-notice{margin:0;color:var(--obx-fg-secondary);font-size:12px;line-height:18px;white-space:pre-wrap}",
 			".obx-toast-wrap{position:sticky;top:0;z-index:20;display:flex;flex-direction:column;gap:4px}",
@@ -1019,7 +1327,68 @@ window.__ModuleLoader__.load({
 			".obx-group-head{display:flex;align-items:baseline;gap:8px;padding-bottom:4px;flex-wrap:wrap}",
 			".obx-group-title{margin:0;font-size:16px;font-weight:500;line-height:22px}",
 			".obx-group-desc{margin:0;color:var(--obx-fg-tertiary);font-size:12px;line-height:18px}",
-			".obx-subgroup-title{margin:14px 0 2px;font-size:14px;font-weight:600;line-height:20px}",
+			".obx-subgroup-title{margin:16px 0 2px;font-size:16px;font-weight:600;line-height:24px}",
+			// 2026-11-19（本地加）：表情包库面板样式。
+			".obx-group-stack{display:flex;flex-direction:column;gap:6px}",
+			".obx-sticker-panel{display:flex;flex-direction:column;gap:8px;padding-bottom:12px}",
+			".obx-sticker-error{margin:0;padding:6px 10px;border-radius:6px;background:rgba(217,74,74,0.12);color:#d94a4a;font-size:13px;line-height:20px;word-break:break-all}",
+			".obx-sticker-debug{margin:0;padding:6px 10px;border-radius:6px;background:rgba(120,120,120,0.14);color:#8a8a8a;font-size:12px;line-height:18px;word-break:break-all;font-family:monospace}",
+			".obx-sticker-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}",
+			".obx-sticker-upload{position:relative;display:inline-flex;align-items:center;font-size:13px;cursor:pointer;border:1px dashed currentColor;border-radius:8px;padding:4px 10px;opacity:.8}",
+			".obx-sticker-upload input{position:absolute;inset:0;opacity:0;cursor:pointer}",
+			".obx-sticker-row{display:grid;grid-template-columns:70px minmax(120px,1fr) minmax(80px,160px) auto auto auto auto;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid rgba(128,128,128,.18)}",
+			".obx-sticker-grid{display:flex;flex-wrap:wrap;gap:10px;padding:4px 0}",
+			".obx-sticker-card{margin:0;flex:0 0 calc((100% - 50px) / 6);max-width:calc((100% - 50px) / 6);min-width:0;display:flex;flex-direction:column;gap:4px;padding:6px;border-radius:10px;border:1px solid rgba(128,128,128,.22);background:rgba(128,128,128,.06)}",
+			".obx-sticker-thumb{width:100%;aspect-ratio:1 / 1;height:auto;display:flex;align-items:center;justify-content:center;border-radius:8px;overflow:hidden;background:rgba(128,128,128,.12);cursor:zoom-in;position:relative}",
+			// 悬停提示（2026-11-19 主人指定）：底部居中的白字细边胶囊，鼠标移上去才出现。
+			".obx-sticker-thumb-hint{position:absolute;left:50%;bottom:6px;transform:translateX(-50%);padding:1px 7px;border-radius:6px;border:1px solid rgba(255,255,255,.72);background:rgba(0,0,0,.62);color:#fff;font-size:12px;line-height:18px;white-space:nowrap;opacity:0;transition:opacity .12s ease;pointer-events:none}",
+			".obx-sticker-thumb:hover .obx-sticker-thumb-hint,.obx-sticker-thumb:focus-visible .obx-sticker-thumb-hint{opacity:1}",
+			".obx-sticker-panel .obx-sticker-title{font-size:16px}",
+			".obx-lightbox{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.78)}",
+			".obx-lightbox-img{max-width:92vw;max-height:92vh;border-radius:8px}",
+			".obx-lightbox-close{position:absolute;top:16px;right:20px;font-size:26px;line-height:1;color:#fff;background:none;border:none;cursor:pointer}",
+			// 2026-11-19 主人要求：未审核标题与按钮同一行，按钮靠右，各带底色；刷新单独放上面一行。
+			".obx-sticker-statline{display:flex;align-items:center;justify-content:space-between;gap:8px}",
+			".obx-sticker-statline .obx-hint{margin:0;flex:1 1 auto;min-width:0}",
+			".obx-sticker-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:16px 0 2px}",
+			".obx-sticker-head .obx-subgroup-title{margin:0}",
+			".obx-sticker-head-actions,.obx-sticker-statline{display:flex;align-items:center;gap:6px}",
+			".obx-accent-btn.obx-accent-btn{background:#2f6ea8;border-color:#265a8a;color:#fff}",
+			".obx-accent-btn.obx-accent-btn:hover{background:#3579b8;border-color:#2a628f;color:#fff}",
+			".obx-accent-btn.obx-accent-btn:disabled{opacity:.55}",
+			".obx-green-btn.obx-green-btn{background:#2f8f5b;border-color:#26744a;color:#fff}",
+			".obx-green-btn.obx-green-btn:hover{background:#359a62;border-color:#2b7f50;color:#fff}",
+			".obx-green-btn.obx-green-btn:disabled{opacity:.55}",
+			".obx-light-btn.obx-light-btn{background:#fff;border-color:#c9c9c9;color:#111}",
+			".obx-light-btn.obx-light-btn:hover{background:#f2f2f2;border-color:#b5b5b5;color:#111}",
+			".obx-light-btn.obx-light-btn:disabled{opacity:.55}",
+			// 2026-11-19 主人要求：「恢复默认」红字红边暗底（危险操作），「重新加载」白底黑字。
+			".obx-danger-outline.obx-danger-outline{background:rgba(90,32,32,.22);border:1px solid #6d2b2b;color:#ff5f5f}",
+			".obx-danger-outline.obx-danger-outline:hover{background:rgba(150,50,50,.3);border:1px solid #8a3737;color:#ff7a7a}",
+			".obx-danger-outline.obx-danger-outline:disabled{opacity:.5}",
+			".obx-sticker-thumb img{width:100%;height:100%;object-fit:cover;display:block;cursor:inherit}",
+			".obx-sticker-thumb-wait{font-size:12px;opacity:.5}",
+			".obx-sticker-card-desc{margin:0;font-size:12px;line-height:16px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all}",
+			".obx-sticker-card-tags{font-size:11px;opacity:.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+			// 2026-11-19 主人要求：描述 / 标签悬停出铅笔，点开变输入框。
+			".obx-sticker-editable{display:inline-flex;align-items:center;gap:3px;max-width:100%;min-width:0}",
+			".obx-sticker-edit-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}",
+			".obx-sticker-edit-btn{opacity:0;flex:0 0 auto;background:none;border:none;padding:0 2px;cursor:pointer;color:inherit;font-size:12px;line-height:1;transition:opacity .12s ease}",
+			".obx-sticker-card:hover .obx-sticker-edit-btn,.obx-sticker-edit-btn:focus-visible{opacity:.7}",
+			".obx-sticker-edit-input{width:100%;min-width:0;font:inherit;font-size:12px;line-height:16px;padding:3px 5px;border-radius:4px;resize:vertical;min-height:46px;border:1px solid rgba(128,128,128,.55);background:rgba(128,128,128,.08);color:inherit}",
+			".obx-sticker-card-actions{display:flex;flex-wrap:wrap;gap:4px}",
+			// 主人 2026-11-19：卡片上的「审核 / 补标签 / 删除」字号比默认小 2px（13 → 11），
+			// 高度跟着收，不然小字号撑在 32px 按钮里很空。
+			".obx-sticker-card-actions>*,.obx-sticker-card-actions button{font-size:12px;line-height:26px;height:26px;border-radius:6px}",
+			// 删除按钮：危险实心红（主人 2026-11-19 指定样式），双类名压过宿主 ghost 变体。
+			".obx-danger-btn.obx-danger-btn{background:#a12b2b;border-color:#7f1f1f;color:#fff}",
+			".obx-danger-btn.obx-danger-btn:hover{background:#b23434;border-color:#8c2424;color:#fff}",
+			".obx-danger-btn.obx-danger-btn:disabled{opacity:.5}",
+			".obx-sticker-hash{font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px;opacity:.6}",
+			".obx-sticker-desc{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+			".obx-sticker-tags{font-size:12px;opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+			".obx-sticker-preview{display:flex;flex-direction:column;gap:6px;align-items:flex-start}",
+			".obx-sticker-preview img{max-width:240px;max-height:240px;border-radius:8px}",
 			".obx-subgroup-title:first-child{margin-top:0}",
 			// 字段行：值/枚举/多行为纵向（label 上、控件下、hint 再下），布尔/通知为左右行
 			".obx-field{display:flex;flex-direction:column;gap:6px;padding:12px 0;border-top:.5px solid var(--obx-hairline)}",
@@ -1064,10 +1433,11 @@ window.__ModuleLoader__.load({
 			".obx-segmented-tab{box-sizing:border-box;height:26px;padding:0 12px;border:0;border-radius:var(--obx-radius-sm);background:transparent;color:var(--obx-fg-secondary);font:inherit;font-size:14px;font-weight:500;line-height:20px;cursor:pointer;white-space:nowrap}",
 			".obx-segmented-tab[aria-selected=true]{background:var(--obx-input-bg);color:var(--obx-fg);box-shadow:0 1px 2px rgba(0,0,0,.08)}",
 			".obx-segmented-tab:disabled{cursor:default;opacity:.4}",
-			// 本地改（2026-11-18）：顶部组切换条（连接/权限/行为…）字号 16，比字段枚举控件大一档。
-			".obx-group-tabs .obx-segmented-tab{font-size:16px;font-weight:500;height:32px;padding:0 14px;line-height:24px}",
+			// 本地改（2026-11-19）：顶部组切换条（连接/权限/行为…）字号 16、随页签增多自动换行（主人指定）。
+			".obx-group-tabs{flex-wrap:wrap;gap:4px}",
+			".obx-group-tabs .obx-segmented-tab{font-size:15px;font-weight:500;height:auto;padding:5px 14px;line-height:24px}",
 			// 同一档字号的兜底选择器（老的 .obx-tabs 容器类仍在用，双保险）。
-			".obx-tabs .obx-segmented-tab{font-size:16px;font-weight:500;height:32px;padding:0 14px;line-height:24px}",
+			".obx-tabs .obx-segmented-tab{font-size:15px;font-weight:500;height:auto;padding:5px 14px;line-height:24px}",
 			// workspace 快速填入行（卡内嵌次级行；说明独占一行）
 			".obx-workspace-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 12px;border-radius:var(--obx-radius-md);background:var(--obx-well-bg)}",
 			".obx-workspace-row .obx-hint{flex-basis:100%}",
@@ -1196,6 +1566,9 @@ window.__ModuleLoader__.load({
 			port: [1, 65535],
 			groupContextLines: [0, 200],
 			rateLimitPerMinute: [0, undefined],
+			// 2026-11-19（本地加）：回合形式掷骰概率（0–1 小数）。
+			voiceReplyProb: [0, 1],
+			stickerReplyProb: [0, 1],
 			interimRecallMs: [0, undefined],
 			inboxQueueDelayMs: [0, undefined],
 			deferredTimeoutMs: [0, undefined],
@@ -1211,6 +1584,18 @@ window.__ModuleLoader__.load({
 			maxFileBytes: [1, 4294967296],
 			inboundImageMaxPx: [0, undefined],
 			inboundFileMaxBytes: [0, undefined],
+			// 2026-11-19（本地加）：主动搭话（与 host NUMBER_RANGE 同界；概率类允许小数）。
+			proactiveMinIdleMinutes: [0, 1440],
+			proactiveMinGapMinutes: [0, 1440],
+			proactiveMaxPerDay: [1, 48],
+			proactiveQuietFrom: [0, 23],
+			proactiveQuietTo: [0, 23],
+			proactiveAttemptGapMinutes: [0, 1440],
+			proactiveBurstProb: [0, 1],
+			proactiveFollowupMinSec: [0, 3600],
+			proactiveFollowupMaxSec: [0, 3600],
+			proactiveFollowupProb: [0, 1],
+			proactiveFollowupMaxPerDay: [0, 48],
 		};
 
 		/**
@@ -1386,12 +1771,31 @@ window.__ModuleLoader__.load({
 					onChange: function (event: any) { props.onChange(event); },
 				}));
 			};
-			return { Switch: switchControl, Checkbox: checkbox, Tag: tag, Button: button, SegmentedControl: segmentedControl, SegmentedTabs: segmentedTabs, Input: input };
+			// 本地加（2026-11-19）：宿主 primitives 缺席时的图片查看器回落（固定遮罩 + 点击关闭）。
+			var imageLightbox = function (props: any) {
+				var labels = props.labels || {};
+				return h(ReactImpl, "div", {
+					className: "obx-lightbox",
+					role: "dialog",
+					"aria-modal": "true",
+					"aria-label": labels.dialog || "原图预览",
+					onClick: function () { if (typeof props.onClose === "function") props.onClose(); },
+				}, h(ReactImpl, "img", { className: "obx-lightbox-img", src: props.src, alt: props.alt || "" }),
+					h(ReactImpl, "button", { type: "button", className: "obx-lightbox-close", "aria-label": labels.close || "关闭" }, "×"));
+			};
+			return { Switch: switchControl, Checkbox: checkbox, Tag: tag, Button: button, SegmentedControl: segmentedControl, SegmentedTabs: segmentedTabs, Input: input, ImageLightbox: imageLightbox };
 		}
 		/**
 		 * 面板统一 UI 组件表：宿主 primitives 在位时直用（组件 CSS 随宿主全局样式表
 		 * 加载，明暗/主题跟随宿主）；seed 表缺席时用回落 shim（视觉走本文件 CSS）。
 		 */
+		/** 本地改（2026-11-19）：顶部页签改用回落实现（宿主那版字号写死、改不动）；按需构造一次。 */
+		var localTabsUi: any = null;
+		var localSegmentedTabs = function (props: any) {
+			if (localTabsUi == null)
+				localTabsUi = fallbackUi(React);
+			return localTabsUi.SegmentedTabs(props);
+		};
 		var UI: any = hostPrimitives != null
 			? {
 				Switch: hostPrimitives.Switch,
@@ -1399,8 +1803,13 @@ window.__ModuleLoader__.load({
 				Tag: hostPrimitives.Tag,
 				Button: hostPrimitives.Button,
 				SegmentedControl: hostPrimitives.SegmentedControl,
-				SegmentedTabs: hostPrimitives.SegmentedTabs,
+				// 本地改（2026-11-19）：页签用本地实现，这样顶部组切换条的字号/高度
+				// 才归面板 CSS 管。注意这里不能直接引用 fallbackUi 内的局部函数
+				// （hostPrimitives 在位时正是走这一支，会 ReferenceError 把插件打挂）。
+				SegmentedTabs: localSegmentedTabs,
 				Input: hostPrimitives.Input,
+				// 本地加（2026-11-19）：面板里点表情包缩略图走宿主自己的大图查看器。
+				ImageLightbox: hostPrimitives.ImageLightbox,
 			}
 			: fallbackUi(React);
 		//#endregion
@@ -1721,21 +2130,32 @@ window.__ModuleLoader__.load({
 				for (var looseField of group.fields) {
 					if (claimedBySection[looseField.key] !== true && byKey[looseField.key] != null) looseNodes.push(byKey[looseField.key]);
 				}
+				// 本地改（2026-11-19）：分区里可以写占位键 "@notices"，把通知段（插话提示…
+				// 限流提示）插到该位置——放到「合并等待窗口（毫秒）」下面。
+				var noticesPlaced = false;
 				for (var section of group.sections) {
 					sectionNodes.push(h(ReactImpl, "h4", { className: "obx-subgroup-title", key: "sec-" + section.id },
 						tr("group." + group.id + ".section." + section.id, section.title)));
 					for (var sectionKey of section.keys) {
+						if (sectionKey === "@notices") {
+							noticesPlaced = true;
+							for (var noticeRow of noticeRows)
+								sectionNodes.push(noticeRow);
+							continue;
+						}
 						if (byKey[sectionKey] != null) sectionNodes.push(byKey[sectionKey]);
 					}
 				}
 				// 本地改（2026-11-18）：分区块排在通知段之后、尾部字段（发送错误通知）之前。
-				fieldNodes = looseNodes.concat(noticeRows).concat(sectionNodes).concat(tailFieldNodes);
+				// 本地改（2026-11-19）：分区里写了 "@notices" 时通知段已就地插入，不再重复追加。
+				fieldNodes = looseNodes.concat(noticesPlaced ? [] : noticeRows).concat(sectionNodes).concat(tailFieldNodes);
 			}
 			// 组标题 + 一句人话描述（经 opts.groupDesc 传入；缺省不渲染）。标题走词条
 			//（zh 源 = GROUPS.title 自动灌入）。
-			var sectionChildren = [h(ReactImpl, "div", { className: "obx-group-head" },
-				h(ReactImpl, "h3", { className: "obx-group-title" }, tr("group." + group.id + ".title", group.title)),
-				groupDesc != null ? h(ReactImpl, "span", { className: "obx-group-desc" }, groupDesc) : null)];
+			// 本地改（2026-11-19）：去掉模块标题（连接 / 权限… 那个 16px 标题），只留一句描述。
+			var sectionChildren = groupDesc != null
+				? [h(ReactImpl, "div", { className: "obx-group-head" }, h(ReactImpl, "span", { className: "obx-group-desc" }, groupDesc))]
+				: [];
 			return h.apply(null, [ReactImpl, "section", { className: "obx-group", "data-group": group.id }]
 				.concat(sectionChildren, [fieldNodes]));
 		}
@@ -1830,6 +2250,378 @@ window.__ModuleLoader__.load({
 		 * @param props t 为宿主注入的翻译函数（locale: NS，语言切换自动重渲染）；
 		 *        remote 为挂载后的 `remote.onebotSettings` API。
 		 */
+		//#region 表情包库面板（2026-11-19 本地加）
+		// 2026-11-19（本地加）：表情包库 —— 面板整套（刷新 / 新增 / 审核 / 重新识别 / 删除 / 看图 / 改描述）。
+		/**
+		 * 表情包库：挂在「表情包」页签下面（列表 / 新增 / 删除 / 审核 / 看图）。
+		 * 数据全走 remote 方法（listStickers / addSticker / deleteSticker /
+		 * approveStickers / unapproveStickers / readSticker），不占配置文件键。
+		 * 审核时由宿主模型看图写描述与标签——点按钮才跑，不常驻、不占显存。
+		 */
+		function StickerPanel(props: StickerPanelProps) {
+			var remote = props.remote;
+			var ui = props.ui;
+			var notify = typeof props.onNotify === "function" ? props.onNotify : function () { };
+			var dataState = React.useState(null);
+			var data = dataState[0];
+			var setData = dataState[1];
+			var busyState = React.useState("");
+			var busy = busyState[0];
+			var setBusy = busyState[1];
+			var previewState = React.useState(null);
+			var preview = previewState[0];
+			var setPreview = previewState[1];
+			// 2026-11-19 主人要求：描述 / 标签可手动改（悬停出铅笔，点开变输入框，失焦保存）。
+			var editState = React.useState(null);
+			var edit = editState[0];
+			var setEdit = editState[1];
+			var aliveRef = React.useRef(true);
+			// 2026-11-19：新增按钮改成宿主 Button，真 file input 藏在后面，三个按钮尺寸才一致。
+			var fileRef = React.useRef(null);
+			var errorState = React.useState("");
+			var error = errorState[0];
+			var setError = errorState[1];
+			// 临时调试：把接口原始返回截一段显示在面板上（2026-11-19 排查「0 张」用，修好后删掉）。
+			var debugState = React.useState("");
+			var debug = debugState[0];
+			var setDebug = debugState[1];
+			React.useEffect(function () {
+				aliveRef.current = true;
+				return function () { aliveRef.current = false; };
+			}, []);
+			var describeError = function (error: unknown) {
+				var box = error as { message?: unknown } | null;
+				var text = String((box != null && box.message) || error || "");
+				return text === "" ? "未知错误" : text;
+			};
+			var apply = function (result: unknown) {
+				if (!aliveRef.current)
+					return;
+				if (result == null || typeof result !== "object") {
+					setError("表情包接口没返回数据（插件可能还没重启到位）: " + String(result));
+					return;
+				}
+				var snapshot = result as StickerSnapshotLike;
+				setDebug("");
+				setError(snapshot.ok === false ? "表情包库读取失败：" + String(snapshot.error || "未知原因") : "");
+				setData({
+					loaded: true,
+					root: typeof snapshot.root === "string" ? snapshot.root : "",
+					autoCollect: snapshot.autoCollect !== false,
+					stats: snapshot.stats || null,
+					items: Array.isArray(snapshot.items) ? snapshot.items : [],
+				});
+			};
+			var fail = function (error: unknown) {
+				notify(describeError(error), true);
+				if (aliveRef.current) setError("调用失败：" + describeError(error));
+			};
+			var load = function (): Promise<void> {
+				if (typeof remote.listStickers !== "function") {
+					setError("插件没有暴露 listStickers 方法（设置页与插件版本不一致，重启 DSH 后再试）");
+					return Promise.resolve();
+				}
+				setBusy("读取");
+				return Promise.resolve(remote.listStickers()).then(unwrap).then(apply).catch(fail).then(function () {
+					if (aliveRef.current) setBusy("");
+				});
+			};
+			React.useEffect(function () { void load(); }, []);
+			/** 统一的动作执行：置忙 → 调 remote → 用返回的新快照刷新 → 收尾。 */
+			var run = function (label: string, action: () => unknown) {
+				setBusy(label);
+				Promise.resolve().then(action).then(unwrap).then(apply).catch(fail).then(function () {
+					if (aliveRef.current) setBusy("");
+				});
+			};
+			// 2026-11-19 主人要求：已审核的图点「重新识别」重跑一次宿主模型识别，结果显示在调试行。
+			// 2026-11-19 主人要求：描述 / 标签可手动改——悬停出铅笔，点开变输入框，失焦即保存（Enter 保存、Esc 取消）。
+			var commitEdit = function (hash: string, field: string, value: unknown) {
+				var patch: { description?: string; tags?: string[] } = {};
+				if (field === "description") {
+					patch.description = String(value == null ? "" : value).trim();
+				}
+				else {
+					patch.tags = String(value == null ? "" : value).split(/[\s,，、;；]+/).filter(function (one: string) { return one !== ""; }).slice(0, 8);
+				}
+				setEdit(null);
+				setBusy("保存");
+				Promise.resolve().then(function () {
+					return remote.updateSticker(hash, patch);
+				}).then(unwrap).then(apply).then(function () {
+					setDebug("已保存 " + String(hash).slice(0, 8) + " 的" + (field === "description" ? "描述" : "标签"));
+				}).catch(fail).then(function () {
+					if (aliveRef.current)
+						setBusy("");
+				});
+			};
+			var editableField = function (item: StickerItemLike, field: string, text?: string) {
+				var editing = edit != null && edit.hash === item.hash && edit.field === field;
+				if (editing) {
+					return h(React, "textarea", {
+						className: "obx-sticker-edit-input",
+						value: edit.value,
+						rows: field === "tags" ? 2 : 3,
+						autoFocus: true,
+						spellCheck: false,
+						onChange: function (event: StickerPanelEvent) { setEdit({ hash: item.hash, field: field, value: event.target.value }); },
+						onBlur: function (event: StickerPanelEvent) { commitEdit(item.hash, field, event.target.value); },
+						onKeyDown: function (event: StickerPanelEvent) {
+							// 2026-11-19：改成多行文本，Enter 换行；Ctrl/⌘+Enter 或失焦才保存。
+							if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+								event.preventDefault();
+								commitEdit(item.hash, field, event.target.value);
+							}
+							if (event.key === "Escape") {
+								event.preventDefault();
+								setEdit(null);
+							}
+						},
+						onClick: function (event: StickerPanelEvent) { event.stopPropagation(); },
+					});
+				}
+				var current = field === "tags"
+					? (Array.isArray(item.tags) && item.tags.length > 0 ? item.tags.join("、") : "无标签")
+					: (String(item.description || "").trim() !== "" ? String(item.description) : String(item.file || item.hash));
+				return h(React, "span", { className: "obx-sticker-editable" },
+					h(React, "span", { className: "obx-sticker-edit-text" }, text != null ? text : current),
+					h(React, "button", {
+						type: "button",
+						className: "obx-sticker-edit-btn",
+						title: "修改",
+						"aria-label": "修改",
+						onClick: function (event: StickerPanelEvent) {
+							event.stopPropagation();
+							setEdit({
+								hash: item.hash,
+								field: field,
+								value: field === "tags" ? (Array.isArray(item.tags) ? item.tags.join("、") : "") : String(item.description || ""),
+							});
+						},
+					}, "✎"));
+			};
+			var retagOne = function (hash: string) {
+				setBusy("重新识别");
+				Promise.resolve().then(function () {
+					return remote.retagStickers([hash]);
+				}).then(unwrap).then(function (result: unknown) {
+					var snapshot = result as StickerSnapshotLike;
+					apply(snapshot);
+					var one = Array.isArray(snapshot.results) ? snapshot.results[0] : null;
+					if (one == null) {
+						setDebug("重新识别：没有返回结果");
+						return;
+					}
+					if (one.ok === true) {
+						var tags = Array.isArray(one.tags) && one.tags.length > 0 ? one.tags.join("、") : "（空）";
+						setDebug("重新识别 " + String(hash).slice(0, 8) + "：描述「" + String(one.description || "（空）") + "」 标签 " + tags);
+						return;
+					}
+					setDebug("重新识别失败 " + String(hash).slice(0, 8) + "：" + String(one.reason || "unknown"));
+				}).catch(fail).then(function () {
+					if (aliveRef.current)
+						setBusy("");
+				});
+			};
+			var onPick = function (event: StickerPanelEvent) {
+				var input = event && event.target;
+				var files: { name?: string }[] = input && input.files ? Array.prototype.slice.call(input.files) : [];
+				if (files.length === 0)
+					return;
+				input.value = "";
+				setBusy("新增");
+				var chain: Promise<unknown> = Promise.resolve();
+				for (var index = 0; index < files.length; index += 1) {
+					(function (file: { name?: string }) {
+						chain = chain.then(function () {
+							return new Promise(function (resolve: (value: string) => void) {
+								var reader = new FileReader();
+								reader.onload = function () { resolve(String(reader.result || "")); };
+								reader.onerror = function () { resolve(""); };
+								reader.readAsDataURL(file);
+							}).then(function (dataUrl) {
+								if (dataUrl === "")
+									return null;
+								return remote.addSticker(file.name || "sticker", dataUrl);
+							});
+						});
+					})(files[index]);
+				}
+				chain.then(function () { return remote.listStickers(); }).then(unwrap).then(apply).catch(fail).then(function () {
+					if (aliveRef.current) setBusy("");
+				});
+			};
+			var openPreview = function (hash: string) {
+				// 缩略图已经读进缓存就直接开（省一次往返），否则现读原图再开。
+				var cached = thumbsRef.current[hash];
+				if (typeof cached === "string" && cached !== "") {
+					setPreview({ hash: hash, dataUrl: cached });
+					return;
+				}
+				setBusy("看图");
+				Promise.resolve(remote.readSticker(hash)).then(unwrap).then(function (result: unknown) {
+					if (!aliveRef.current || result == null)
+						return;
+					var image = result as StickerImageLike;
+					if (typeof image.dataUrl === "string" && image.dataUrl !== "")
+						setPreview({ hash: hash, dataUrl: image.dataUrl });
+					else
+						notify(image.tooLarge === true ? "这张图太大，面板里不预览（去文件夹里看）" : "读图失败");
+				}).catch(fail).then(function () {
+					if (aliveRef.current) setBusy("");
+				});
+			};
+			// 2026-11-19：首屏 data 还是 null（正在读取），先按空库渲染，别崩。
+			var items = data != null && Array.isArray(data.items) ? data.items : [];
+			var pending = items.filter(function (item: StickerItemLike) { return item.approved !== true; });
+			var approved = items.filter(function (item: StickerItemLike) { return item.approved === true; });
+			var stats = (data != null ? data.stats : null) || { total: items.length, approved: approved.length, pending: pending.length, bytes: 0 };
+			var disabled = busy !== "";
+			// 图墙：进可视区才向 host 要图（懒加载）。2026-11-19 主人指定不要缩略图，
+			// 一律读原图，只是靠 IntersectionObserver 控制一次只取可见的那几张。
+			var thumbsRef = React.useRef({});
+			var thumbState = React.useState({});
+			var thumbs = thumbState[0];
+			var setThumbs = thumbState[1];
+			var askedRef = React.useRef({});
+			var observerRef = React.useRef(null);
+			var mountedRef = React.useRef(true);
+			React.useEffect(function () {
+				mountedRef.current = true;
+				return function () {
+					mountedRef.current = false;
+					if (observerRef.current != null) {
+						observerRef.current.disconnect();
+						observerRef.current = null;
+					}
+				};
+			}, []);
+			var urlOf = function (image: unknown): string {
+				var url = image != null && typeof (image as StickerImageLike).dataUrl === "string" ? String((image as StickerImageLike).dataUrl) : "";
+				if (url === "")
+					throw new Error("empty image");
+				return url;
+			};
+			var ensureThumb = function (hash: string) {
+				if (askedRef.current[hash] === true || thumbsRef.current[hash] !== undefined)
+					return;
+				askedRef.current[hash] = true;
+				// 2026-11-19 主人指定：不要缩略图，直接读原图。
+				var trySticker = function () {
+					return Promise.resolve(remote.readSticker(hash)).then(unwrap).then(urlOf);
+				};
+				trySticker().then(function (url: string) {
+					thumbsRef.current[hash] = url;
+					if (mountedRef.current)
+						setThumbs(Object.assign({}, thumbsRef.current));
+				}).catch(function (error: unknown) {
+					thumbsRef.current[hash] = "";
+					if (mountedRef.current) {
+						setThumbs(Object.assign({}, thumbsRef.current));
+						setDebug("读图失败：" + String(hash).slice(0, 8) + " " + describeError(error));
+					}
+				});
+			};
+			var attachThumb = function (hash: string) {
+				return function (node: { setAttribute(name: string, value: string): void } | null) {
+					if (node == null)
+						return;
+					node.setAttribute("data-hash", hash);
+					if (typeof IntersectionObserver !== "function") {
+						ensureThumb(hash);
+						return;
+					}
+					if (observerRef.current == null) {
+						observerRef.current = new IntersectionObserver(function (entries) {
+							for (var i = 0; i < entries.length; i += 1) {
+								var entry = entries[i];
+								if (entry.isIntersecting !== true)
+									continue;
+								var key = entry.target.getAttribute("data-hash");
+								observerRef.current.unobserve(entry.target);
+								if (key != null)
+									ensureThumb(key);
+							}
+						}, { rootMargin: "240px" });
+					}
+					observerRef.current.observe(node);
+				};
+			};
+			var cardOf = function (item: StickerItemLike) {
+				var tagList = Array.isArray(item.tags) ? item.tags : [];
+				var src = thumbs[item.hash];
+				return h(React, "figure", { className: "obx-sticker-card", key: item.hash },
+						// 2026-11-19：缩略图点击 = 用宿主自己的大图查看器（ImageLightbox）看原图。
+						h(React, "div", {
+							className: "obx-sticker-thumb",
+							ref: attachThumb(item.hash),
+							title: item.description || item.file || item.hash,
+							role: "button",
+							tabIndex: 0,
+							"aria-label": "查看原图",
+							onClick: function () { openPreview(item.hash); },
+							onKeyDown: function (event: StickerPanelEvent) {
+								if (event.key === "Enter" || event.key === " ")
+									openPreview(item.hash);
+							},
+						},
+						src ? h(React, "img", { src: src, alt: item.description || item.hash, loading: "lazy" }) : h(React, "span", { className: "obx-sticker-thumb-wait" }, "…"),
+						h(React, "span", { className: "obx-sticker-thumb-hint", "aria-hidden": "true" }, "查看原图")),
+					h(React, "figcaption", { className: "obx-sticker-card-desc" }, editableField(item, "description")),
+					h(React, "div", { className: "obx-sticker-card-tags" }, editableField(item, "tags", tagList.length > 0 ? tagList.slice(0, 4).join(" ") : "无标签")),
+					h(React, "div", { className: "obx-sticker-card-actions" },
+						// 主人 2026-11-19：已审核的图都带「重新识别」（原「补标签」文案改掉，且原来点了没反应）。
+						item.approved === true
+							? h(React, ui.Button, { variant: "ghost", className: "obx-accent-btn", disabled: disabled, onClick: function () { retagOne(item.hash); } }, "重新识别")
+							: h(React, ui.Button, { variant: "primary", disabled: disabled, onClick: function () { run("审核", function () { return remote.approveStickers([item.hash]); }); } }, "审核"),
+						h(React, ui.Button, { variant: "ghost", className: "obx-danger-btn", disabled: disabled, onClick: function () { run("删除", function () { return remote.deleteSticker([item.hash]); }); } }, "删除")));
+			};
+			return h(React, "section", { className: "obx-sticker-panel" },
+				error !== "" ? h(React, "p", { className: "obx-sticker-error" }, error) : null,
+				debug !== "" ? h(React, "p", { className: "obx-sticker-debug" }, debug) : null,
+				h(React, "div", { className: "obx-sticker-statline" },
+					h(React, "p", { className: "obx-hint" }, "库目录：" + ((data != null ? data.root : "") || "—") + "　已审核 " + String(stats.approved) + " 张 / 未审核 " + String(stats.pending) + " 张（聊天只从已审核里挑图）"),
+					h(React, ui.Button, { variant: "ghost", className: "obx-light-btn", disabled: disabled, onClick: function () { void load(); } }, busy === "读取" ? "读取中…" : "刷新")),
+				busy !== "" ? h(React, "p", { className: "obx-hint" }, "处理中：" + busy + "…") : null,
+				preview != null
+					? (typeof ui.ImageLightbox === "function"
+						// 2026-11-19 主人要求：走宿主自己的大图查看器（Esc / 点遮罩关闭）。
+						? h(React, ui.ImageLightbox, {
+							src: preview.dataUrl,
+							alt: preview.hash,
+							labels: { dialog: "原图预览", close: "关闭预览" },
+							onClose: function () { setPreview(null); },
+						})
+						: h(React, "div", { className: "obx-sticker-preview" },
+							h(React, "img", { src: preview.dataUrl, alt: preview.hash }),
+							h(React, ui.Button, { variant: "ghost", onClick: function () { setPreview(null); } }, "关闭")))
+					: null,
+				h(React, "div", { className: "obx-sticker-head" },
+					h(React, "h4", { className: "obx-subgroup-title obx-sticker-title" }, "未审核（" + String(pending.length) + "）"),
+					h(React, "div", { className: "obx-sticker-head-actions" },
+						h(React, "input", {
+							ref: fileRef,
+							type: "file",
+							multiple: true,
+							accept: "image/*",
+							style: { display: "none" },
+							onChange: onPick,
+						}),
+						h(React, ui.Button, { variant: "ghost", className: "obx-green-btn", disabled: disabled, onClick: function () {
+								var node = fileRef.current;
+								if (node != null)
+									node.click();
+							} }, "新增"),
+						h(React, ui.Button, { variant: "ghost", className: "obx-light-btn", disabled: disabled, onClick: function () { run("审核全部", function () { return remote.approveStickers([]); }); } }, "审核全部"))),
+				pending.length === 0
+					? h(React, "p", { className: "obx-hint" }, "没有待审核的图")
+					: h(React, "div", { className: "obx-sticker-grid" }, pending.map(cardOf)),
+				h(React, "h4", { className: "obx-subgroup-title obx-sticker-title" }, "已审核（" + String(approved.length) + "）"),
+				approved.length === 0
+					? h(React, "p", { className: "obx-hint" }, "还没有已审核的表情包")
+					: h(React, "div", { className: "obx-sticker-grid" }, approved.map(cardOf)));
+		}
+		//#endregion
 		function OnebotSettingsPanel(props: any) {
 			var t = props.t;
 			var remote = props.remote;
@@ -2277,8 +3069,10 @@ window.__ModuleLoader__.load({
 						dirtyCount > 0 ? h(React, "span", { className: "obx-status-warn" }, format(t("save.dirtyBadge"), { count: dirtyCount })) : null,
 						snapshot.entryActive === true ? null : h(React, "span", { className: "obx-status-warn", title: t("effect.entryInactiveTitle") }, t("effect.entryInactive")),
 						h(React, "span", { className: "obx-head-spacer" }),
-						h(React, UI.Button, { variant: "ghost", disabled: busy, onClick: handleReset }, t("settings.reset")),
-						h(React, UI.Button, { variant: "ghost", disabled: busy, onClick: handleReload }, t("settings.reload"))),
+						h(React, UI.Button, { variant: "ghost", className: "obx-danger-outline", disabled: busy, onClick: handleReset }, t("settings.reset")),
+						h(React, UI.Button, { variant: "ghost", className: "obx-light-btn", disabled: busy, onClick: handleReload }, t("settings.reload"))),
+					// 本地改（2026-11-19）：热生效提示移到页签行上面，独占一行贴顶。
+					h(React, "p", { className: "obx-effect obx-effect--top" }, t("effect.hint")),
 					h(React, "div", { className: "obx-head-row" },
 						h(React, UI.SegmentedTabs, {
 							items: GROUPS.map(function (group: any) { return { value: group.id, label: t("group." + group.id + ".title", group.title) }; }),
@@ -2286,21 +3080,32 @@ window.__ModuleLoader__.load({
 							onChange: function (next: any) { setActiveTab(next); },
 							label: t("settings.groupsLabel", "设置分组"),
 						}),
-						h(React, "span", { className: "obx-head-spacer" }),
-						h(React, "span", { className: "obx-meta", title: t("settings.buildMarker", "面板构建标记") }, "ui-native"),
-						h(React, "span", { className: "obx-meta" }, t("revision.label") + " " + String(snapshot.revision)))),
+						h(React, "span", { className: "obx-head-spacer" }))),
 				h(React, "div", { className: "obx-body" },
 					(error !== null || notice !== "") ? h(React, "div", { className: "obx-toast-wrap", "aria-live": "polite" },
 						error !== null ? h(React, "p", { className: "obx-error" + (conflictActive ? " obx-error--conflict" : ""), role: "alert" }, t("status.error") + "：" + error) : null,
 						notice !== "" ? h(React, "p", { className: "obx-notice" }, notice) : null) : null,
-					h(React, "p", { className: "obx-effect" }, t("effect.hint")),
 					GROUPS.filter(function (group) { return group.id === activeTab; }).map(function (group) {
-						return renderGroup(React, group, Object.assign({}, changeHandlers, {
+						var groupNode = renderGroup(React, group, Object.assign({}, changeHandlers, {
 							ui: UI,
 							texts: texts,
 							// 词条缺失（新组忘配 desc）时传 null，不把原始 key 当描述渲染
 							groupDesc: zh["group." + group.id + ".desc"] != null ? t("group." + group.id + ".desc") : null,
 							modeInactiveKeys: modeInactiveKeys,
+						}));
+						if (group.id !== "stickers")
+							return groupNode;
+						// 2026-11-19（本地加）：表情包组在字段之后挂「表情包库」面板。
+						return h(React, "div", { key: "group-" + group.id, className: "obx-group-stack" }, groupNode, h(React, StickerPanel, {
+							key: "sticker-panel",
+							remote: remote,
+							ui: UI,
+							onNotify: function (message: string, isError?: boolean) {
+								if (isError === true)
+									setError(message);
+								else
+									setNotice(message);
+							},
 						}));
 					}),
 					h(React, "div", { className: "obx-foot" },

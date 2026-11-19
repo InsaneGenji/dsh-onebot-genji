@@ -24,7 +24,15 @@ import { MediaStore } from '../src/media.js'
 import { Transcriber } from '../src/stt.js'
 import { shortSessionId } from '../src/commands.js'
 
-import { makeCmdHarness, makeEvent, makeHarness } from './helpers/bridge-harness.js'
+import { makeCmdHarness, makeEvent, makeHarness, outboundTextJoined } from './helpers/bridge-harness.js'
+
+/**
+ * 气泡切分（issue #6）之后一条回复可能是多条消息，条间还有 800–1500ms 停顿：
+ * vi.waitFor 默认 1000ms 常常等不到第二条。这里统一放宽到 15s。
+ */
+const settleWait = (check: () => void, options: { timeout?: number } = {}) =>
+  vi.waitFor(check, { timeout: 15_000, ...options })
+
 
 function registryOf(h: { bridge: unknown }): ChatRegistry {
   return (h.bridge as unknown as { registry: ChatRegistry }).registry
@@ -175,11 +183,11 @@ describe('switchable list persistence (registry)', () => {
     // soft retire (it is the same id).
     expect(registry.retiredSessionIds.has('onebot-private-10001')).toBe(true)
     // The list file lands on disk (atomic, no .tmp leftover).
-    await vi.waitFor(async () => {
+    await settleWait(async () => {
       const content = await readFile(join(mediaDir, 'switchable-sessions.json'), 'utf8')
       expect(JSON.parse(content)).toEqual({ 'private:10001': [{ id: bareId, retiredAt: list[0].retiredAt }] })
     })
-    await vi.waitFor(async () => {
+    await settleWait(async () => {
       const retired = JSON.parse(await readFile(join(mediaDir, 'retired-sessions.json'), 'utf8')) as string[]
       expect(retired).toContain(bareId)
     })
@@ -215,7 +223,7 @@ describe('switchable list persistence (registry)', () => {
     expect(registry.switchableSessions('private:10001')).toEqual([])
     // A later record still persists (atomic temp+rename, no .tmp leftover).
     recordSwitchableOf(registry)('private:10001', 'onebot-private-10001-x')
-    await vi.waitFor(async () => {
+    await settleWait(async () => {
       const content = await readFile(join(mediaDir, 'switchable-sessions.json'), 'utf8')
       expect(content).toContain('onebot-private-10001-x')
     })
@@ -271,7 +279,7 @@ describe('switchSession (registry)', () => {
     expect(String(registry.chats.get('private:10001')!.sessionId)).toBe(s1)
     expect(registry.retiredSessionIds.has(s1)).toBe(false)
     expect(brokenOf(registry).has(s1)).toBe(false)
-    await vi.waitFor(async () => {
+    await settleWait(async () => {
       const retired = JSON.parse(await readFile(join(mediaDir, 'retired-sessions.json'), 'utf8')) as string[]
       expect(retired).not.toContain(s1)
     })
@@ -280,7 +288,7 @@ describe('switchSession (registry)', () => {
     expect(registry.retiredSessionIds.has(s2)).toBe(true)
     expect(brokenOf(registry).has(s2)).toBe(false)
     // The mapping now points at the restored session.
-    await vi.waitFor(async () => {
+    await settleWait(async () => {
       const mapping = JSON.parse(await readFile(join(mediaDir, 'chat-sessions.json'), 'utf8')) as Record<string, string>
       expect(mapping['private:10001']).toBe(s1)
     })
@@ -317,20 +325,20 @@ describe('/session command (bridge harness)', () => {
   it('e2e pinned: /new → /session → /session 1 → the next plain message continues the ORIGINAL session via resume', async () => {
     const h = await makeHarness({ resumeOk: true })
     h.sendText('你好')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(1))
     const original = h.sessionIds[0]
 
     h.sendText('/new')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('已开启新会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('已开启新会话')
     })
     h.sendText('/session')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('可切回历史会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('可切回历史会话')
     })
     h.sendText('/session 1')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('已切回历史会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('已切回历史会话')
     })
 
     // The switch went through agents.resume with the ORIGINAL id…
@@ -340,7 +348,7 @@ describe('/session command (bridge harness)', () => {
     // …and the next PLAIN message lands in that same session (not a fresh
     // create): the session id list holds the id twice, create ran only once.
     h.sendText('回到原会话的一条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(2))
     expect(h.captured.followups[1].sessionId).toBe(original)
     expect(h.sessionIds).toEqual([original, original])
     expect(agents.create).toHaveBeenCalledTimes(1)
@@ -353,19 +361,19 @@ describe('/session command (bridge harness)', () => {
   it('restart path: loadMapping restores the switched-back session (un-retired entry resumes normally)', async () => {
     const h = await makeHarness({ resumeOk: true })
     h.sendText('你好')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(1))
     const original = h.sessionIds[0]
     h.sendText('/new')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('已开启新会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('已开启新会话')
     })
     h.sendText('/session')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('可切回历史会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('可切回历史会话')
     })
     h.sendText('/session 1')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('已切回历史会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('已切回历史会话')
     })
     h.client.close()
     await h.bridge.stop()
@@ -382,7 +390,7 @@ describe('/session command (bridge harness)', () => {
     const mappedSession = typeof entry === 'string' ? entry : (entry as { session: string }).session
     expect(mappedSession).toBe(original)
     const { bridge: bridge2, resumed } = await makeRestartBridge(h.mediaDir)
-    await vi.waitFor(() => {
+    await settleWait(() => {
       expect(String(registryOf({ bridge: bridge2 }).chats.get('private:10001')?.sessionId ?? '')).toBe(original)
     })
     expect(resumed).toEqual([original])
@@ -393,22 +401,22 @@ describe('/session command (bridge harness)', () => {
     const h = await makeCmdHarness()
     // No switchable history yet (and no live chat): the friendly empty reply.
     h.sendText('/session')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('没有可切回的历史会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('没有可切回的历史会话')
     })
     expect(registryOf(h).getSettings('private:10001').pendingSelection).toBeUndefined()
 
     h.sendText('你好')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(1))
     const original = h.sessionIds[0]
     h.sendText('/new')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('已开启新会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('已开启新会话')
     })
 
     h.sendText('/session')
-    await vi.waitFor(() => {
-      const text = h.outbound.map(f => JSON.stringify(f.params)).join('\n')
+    await settleWait(() => {
+      const text = outboundTextJoined(h.outbound)
       expect(text).toContain('可切回历史会话：')
       // Preview degradation: this harness has no persistence service, so the
       // item renders the no-content placeholder and omits the creation time;
@@ -423,15 +431,15 @@ describe('/session command (bridge harness)', () => {
     expect(pending?.items.map(i => i.payload)).toEqual([original])
 
     h.sendText('/session 9')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('序号越界，请回复 /session 重新查看列表'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('序号越界，请回复 /session 重新查看列表')
     })
     // Deliberately retained for a retry.
     expect(registryOf(h).getSettings('private:10001').pendingSelection?.items).toHaveLength(1)
 
     h.sendText('/session foo')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('用法：/session 查看可切回会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('用法：/session 查看可切回会话')
     })
 
     h.client.close()
@@ -442,48 +450,48 @@ describe('/session command (bridge harness)', () => {
   it('live-chat switch: current session enters the list, the target resumes its history, and switching back works', async () => {
     const h = await makeHarness({ resumeOk: true })
     h.sendText('第一条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(1))
     const s1 = h.sessionIds[0]
     h.sendText('/new')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('已开启新会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('已开启新会话')
     })
     h.sendText('第二条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(2))
     const s2 = h.sessionIds[1]
     expect(s2).not.toBe(s1)
 
     // List first: the numeric pick resolves against the snapshot the bare
     // form rendered (same R2 contract as /workspace|/model|/preset).
     h.sendText('/session')
-    await vi.waitFor(() => {
+    await settleWait(() => {
       // New item format: preview placeholder (this harness has no persistence
       // service) + retire time + recognizable id.
-      const text = h.outbound.map(f => JSON.stringify(f.params)).join('\n')
+      const text = outboundTextJoined(h.outbound)
       expect(text).toContain('1. （无对话内容）（')
       expect(text).toContain(' 退休 · ' + s1 + '）')
     })
     h.sendText('/session 1')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('已切回历史会话：' + s1))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('已切回历史会话：' + s1)
     })
     expect(String(registryOf(h).chats.get('private:10001')!.sessionId)).toBe(s1)
     expect(registryOf(h).switchableSessions('private:10001').map(e => e.id)).toEqual([s2])
     h.sendText('第三条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(3))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(3))
     expect(h.captured.followups[2].sessionId).toBe(s1)
 
     // Round trip: /session back to s2.
     h.sendText('/session')
-    await vi.waitFor(() => {
+    await settleWait(() => {
       // New item format: the retired s2 shows as the preview placeholder +
       // retire time + recognizable id.
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('1. （无对话内容）（'))).toBe(true)
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes(' 退休 · ' + shortSessionId(s2) + '）'))).toBe(true)
+      expect(outboundTextJoined(h.outbound)).toContain('1. （无对话内容）（')
+      expect(outboundTextJoined(h.outbound)).toContain(' 退休 · ' + shortSessionId(s2) + '）')
     })
     h.sendText('/session 1')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('已切回历史会话：' + s2))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('已切回历史会话：' + s2)
     })
     expect(String(registryOf(h).chats.get('private:10001')!.sessionId)).toBe(s2)
     expect(registryOf(h).switchableSessions('private:10001').map(e => e.id)).toEqual([s1])
@@ -496,23 +504,23 @@ describe('/session command (bridge harness)', () => {
   it('refuses to switch while the chat is busy (提示先 /stop) and keeps the snapshot', async () => {
     const h = await makeCmdHarness()
     h.sendText('你好')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(1))
     h.sendText('/new')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('已开启新会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('已开启新会话')
     })
     // Rebuild a live chat first — /new left no live agent to be busy.
     h.sendText('第二条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(2))
     h.sendText('/session')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('可切回历史会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('可切回历史会话')
     })
     h.chats().get('private:10001')!.busy = true
     const resumedBefore = (registryOf(h) as unknown as { deps: { agents: { resume: ReturnType<typeof vi.fn> } } }).deps.agents.resume
     h.sendText('/session 1')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('请先 /stop 再切换会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('请先 /stop 再切换会话')
     })
     expect(resumedBefore).not.toHaveBeenCalled()
     // The snapshot was not consumed by the refused attempt.
@@ -525,29 +533,29 @@ describe('/session command (bridge harness)', () => {
   it('command-level resume failure: ❌ fallback reply and the next message opens a fresh session', async () => {
     const h = await makeCmdHarness()
     h.sendText('第一条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(1))
     const s1 = h.sessionIds[0]
     h.sendText('/new')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('已开启新会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('已开启新会话')
     })
     h.sendText('第二条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(2))
     const s2 = h.sessionIds[1]
 
     h.sendText('/session')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('可切回历史会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('可切回历史会话')
     })
     h.sendText('/session 1')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('切回历史会话失败'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('切回历史会话失败')
     })
     // The broken target left the list; the previous session is switchable.
     expect(registryOf(h).switchableSessions('private:10001').map(e => e.id)).toEqual([s2])
     // The chat is not stuck: the next message builds a fresh session.
     h.sendText('第三条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(3))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(3))
     const s3 = h.captured.followups[2].sessionId
     expect(s3).not.toBe(s1)
     expect(s3).not.toBe(s2)
@@ -561,7 +569,7 @@ describe('/session command (bridge harness)', () => {
   it('collision heal and create-collision fallback never enter the switchable list', async () => {
     const h = await makeHarness({ failCreateFor: 'onebot-private-10001' })
     h.sendText('hi')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(1))
     // The bare-id create collision is a hard retire — no switchable entry.
     expect(registryOf(h).switchableSessions('private:10001')).toEqual([])
     expect(registryOf(h).retiredSessionIds.has('onebot-private-10001')).toBe(true)
@@ -572,7 +580,7 @@ describe('/session command (bridge harness)', () => {
       turn: 1,
       reason: { kind: 'error', error: { code: 'E_COLLISION', message: 'session "' + fallback + '" already has a persisted log on disk that does not match this live session (id collision)' } },
     }))
-    await vi.waitFor(async () => {
+    await settleWait(async () => {
       const retired = JSON.parse(await readFile(join(h.mediaDir, 'retired-sessions.json'), 'utf8')) as string[]
       expect(retired).toContain(fallback)
     })
@@ -586,14 +594,14 @@ describe('/session command (bridge harness)', () => {
   it('/status shows the switchable count', async () => {
     const h = await makeCmdHarness()
     h.sendText('你好')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(1))
     h.sendText('/new')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('已开启新会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('已开启新会话')
     })
     h.sendText('/status')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('可切回   : 1 条历史会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('可切回   : 1 条历史会话')
     })
     h.client.close()
     await h.bridge.stop()
@@ -603,25 +611,25 @@ describe('/session command (bridge harness)', () => {
   it('#4b: bracketed serials normalize — /session <1> and ＜1＞ switch like /session 1', async () => {
     const h = await makeHarness({ resumeOk: true })
     h.sendText('第一条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(1))
     const s1 = h.sessionIds[0]
     h.sendText('/new')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('已开启新会话'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('已开启新会话')
     })
     h.sendText('第二条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(2))
     const s2 = h.sessionIds[1]
     expect(s2).not.toBe(s1)
 
     h.sendText('/session')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes(' 退休 · ' + s1 + '）'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain(' 退休 · ' + s1 + '）')
     })
     // Half-width angle brackets.
     h.sendText('/session <1>')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('已切回历史会话：' + s1))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('已切回历史会话：' + s1)
     })
     const registry = registryOf(h)
     const agents = (registry as unknown as { deps: { agents: { resume: ReturnType<typeof vi.fn> } } }).deps.agents
@@ -629,12 +637,12 @@ describe('/session command (bridge harness)', () => {
 
     // Fullwidth angle brackets: the round trip switches back to s2.
     h.sendText('/session')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes(' 退休 · ' + shortSessionId(s2) + '）'))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain(' 退休 · ' + shortSessionId(s2) + '）')
     })
     h.sendText('/session ＜1＞')
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => JSON.stringify(f.params).includes('已切回历史会话：' + s2))).toBe(true)
+    await settleWait(() => {
+      expect(outboundTextJoined(h.outbound)).toContain('已切回历史会话：' + s2)
     })
     expect(String(registry.chats.get('private:10001')?.sessionId ?? '')).toBe(s2)
 

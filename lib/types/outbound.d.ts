@@ -65,6 +65,37 @@ export declare function isAsideOnly(text: string): boolean;
  * 不经过本函数）。
  */
 export declare function splitAtSegments(text: string): OutboundSegment[];
+/**
+ * 气泡切分（2026-11-19 按 GitHub issue #6 的核心逻辑重写，主人要求）：
+ * 1. 先按换行初步切分，一行一条——**换行是硬边界，行与行之间不合并**（主人
+ *    反复强调「换行了就要分成两条」）；
+ * 2. 每行内部：长度超过 sentenceCut(35) 时按句末标点断句，短行原样保留；
+ * 3. 行内吸附合并：纯标点（`\p{P}\p{S}`）并进上一条；上一条不足 6 字且合计
+ *    不超过 24 字也并进去，避免「也是哦」「哈哈」这种碎片单独成条；
+ * 4. 跨行只做一件事：整行都是纯标点时并进上一条（「真的假的」+「！」）；
+ * 5. 单轮最多 4 条，多出来的并到最后一条（防刷屏）。
+ * 发送侧的呼吸停顿在 sendToChat 里做（首条立即，其后 800–1500ms 随机）。
+ */
+export declare function splitIntoBubbles(text: string, maxBubbles?: number, sentenceCut?: number): string[];
+/**
+ * 相邻气泡之间的拟人打字停顿：800–1500ms 随机（issue #6 的生产参数）。
+ * 首条不等待，所以这里只被第 2 条及以后调用。
+ */
+export declare function bubbleGapMs(random?: () => number): number;
+/**
+ * 双发闸（语义版，2026-11-19 主人要回）：判断「回合末正文」是不是把工具
+ * （qq_send_text / 图片配文那种）刚说过的话又重复了一遍。纯文本启发式，
+ * 不调模型：先归一化（去掉空白、标点、符号、emoji、括号里的颜文字），
+ * 再比二元组 Dice 系数。长度差超过一倍直接判不重复（一句是新内容）。
+ */
+export declare function textTopicKey(text: string): string;
+/** 二元组 Dice 系数（0–1）：1 = 归一化后一模一样。 */
+export declare function topicSimilarity(a: string, b: string): number;
+/** 判重阈值：0.72 能把「我先去跑，几十秒」/「我去跑，几十秒」判成同一句，
+ * 又能放过「来了」+「来了，我这就去扒谱」这种后半句有新信息的。 */
+export declare const DUPLICATE_TOPIC_THRESHOLD = 0.72;
+/** 语义判重：归一化后同串直接算重复，否则二元组 Dice ≥ 阈值算重复。 */
+export declare function isDuplicateTopic(a: string, b: string, threshold?: number): boolean;
 /** Options for an explicit outbound send (from tools). */
 export interface SendOptions {
     replyTo?: string;

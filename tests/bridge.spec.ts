@@ -507,6 +507,8 @@ describe('ChatBridge', () => {
   }, 30_000)
 
   it('golden: private plain-text round produces exactly one text send_msg (M2-T0 golden)', async () => {
+    // 2026-11-19: 回合形式掷骰会往 followup 尾部追加提示段，钉住随机数让骰子落空。
+    vi.spyOn(Math, 'random').mockReturnValue(0.99)
     const h = await makeHarness()
     h.sendText('你好，帮我看看这个')
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
@@ -524,6 +526,7 @@ describe('ChatBridge', () => {
     expect(sends[0].params).toMatchObject({ user_id: 10001 })
     expect(sends[0].params.message).toEqual([{ type: 'text', data: { text: '这是回复' } }])
     expect(h.outbound.some(f => f.action === 'delete_msg' || f.action === 'send_forward_msg' || f.action === 'send_private_forward_msg')).toBe(false)
+    vi.restoreAllMocks()
     h.client.close()
     await h.bridge.stop()
     await h.connection.stop()

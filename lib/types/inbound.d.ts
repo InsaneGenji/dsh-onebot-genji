@@ -137,6 +137,14 @@ export interface InboundContext {
         nickname: string;
         text: string;
     }): Promise<void>;
+    /** 本地加（2026-11-19）：未 @ 的群消息记进「参考上下文条数」环缓冲（不触发
+     * 任何回合）。缺席 = 零行为，与上游等价。 */
+    recordGroupContext?(chatId: ChatId, entry: {
+        time: number;
+        userId: string;
+        nickname: string;
+        text: string;
+    }): void;
     /** T2 (P1): busy-turn policy seam — invoked for every non-command message
      * after ALL gates (dedup/policy/mention/media/rate-limit), right before the
      * turn dispatch, so queue/steer can never bypass an existing gate. Returns

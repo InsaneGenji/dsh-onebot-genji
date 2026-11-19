@@ -27,6 +27,9 @@ import type { TraceStage } from './trace.js';
  * turn (the flag resets at turn/end) so a burst of queued messages never
  * spams the chat. Exported for the deterministic text wait in tests. */
 export declare const QUEUE_NOTICE_TEXT = "\u23F3 \u5F53\u524D\u4EFB\u52A1\u8FD0\u884C\u4E2D\uFF0C\u65B0\u6D88\u606F\u5DF2\u6392\u961F\uFF0C\u5C06\u5728\u5F53\u524D\u4EFB\u52A1\u7ED3\u675F\u540E\u4F9D\u6B21\u5904\u7406\u3002";
+export declare const VOICE_PROB = 0.1;
+export declare const STICKER_PROB = 0.39;
+export declare const VOICE_HINT: string;
 /** T2-B2: how long a relayed ask_user_question batch stays interceptable —
  * after this the bridge stops treating plain replies as answers (the host's
  * continued-state question may still be answered from the Web card). */
@@ -150,6 +153,14 @@ export interface BridgeConfig {
     groupPromptFile?: string;
     /** 本地加（2026-11-18）：被 @ 时带上的群聊上下文条数（0/absent = 不参考，上限 200）。 */
     groupContextLines?: number;
+    /** 本地加（2026-11-19）：回合形式掷骰——回复转成语音条的开关与概率（默认开 / 0.1）。 */
+    voiceReplyEnabled?: boolean;
+    voiceReplyProb?: number;
+    /** 本地加（2026-11-19）：回合形式掷骰——发表情包的开关与概率（默认开 / 0.39）。 */
+    stickerReplyEnabled?: boolean;
+    stickerReplyProb?: number;
+    /** 本地加（2026-11-19）：表情包库目录（空 = ~/.dsh/dsh-onebot-genji/stickers）。 */
+    stickerRoot?: string;
     /** T4 (PR port 记忆文件)：记忆文件开关（默认关，裁定口径）；只对私聊生效。 */
     memoryFilesEnabled?: boolean;
     /** T4 (PR port 记忆文件)：记忆文件路径列表（~/ 展开；单文件 8000 字符、
@@ -183,11 +194,15 @@ export interface BridgeConfig {
  * 服务未部署（宿主摘除 session-title 插件）时取不到 = 同步跳过，不崩。 */
 export interface SessionTitlePort {
     get(session: Session): {
+        title?: string;
         source?: {
             kind?: string;
         };
     } | undefined;
     refresh(session: Session): Promise<unknown>;
+    /** 本地补丁 2026-11-17（搬进源码）：直接写标题——身份定名（昵称/群名）用，
+     *  宿主侧会把标题的 source 记成 user。宿主没提供时退回 refresh。 */
+    rename?(session: Session, title: string): unknown;
 }
 /** W1 trace/config extensions: the observability knobs ride as optional
  * members (same pattern as the W2-②③ gate keys) so the declared BridgeConfig
@@ -407,6 +422,11 @@ export declare class ChatBridge {
     /** 群聊旁观 (#58)：每群旁听环形缓冲 + 冷却/每日上限记账。惰性判定，
      * 零定时器；缓冲不持久化（易失的「最近发生了什么」，重启后重新积累）。 */
     private readonly bystander;
+    /** 群聊上下文（2026-11-19 本地加）：每群最近 N 条未 @ 我的群消息，供被叫到那回合参考。
+     *  不持久化（易失的「刚才在聊什么」），条数由 config.groupContextLines 控制。 */
+    private readonly groupContextBuf;
+    /** 群名缓存（本地补丁 2026-11-17）：group:123 → 群名，定名时少调一次 get_group_info。 */
+    private readonly qqGroupTitles;
     /** W1/T5: chatId → the traceId of the chat's unsettled INJECTED round
      * (independent of the trace sink, so the dry-run guard covers the async
      * agent reply even with tracing off). Cleared by a real dispatch to the
@@ -534,6 +554,26 @@ export declare class ChatBridge {
      * - refresh 后台执行不 await 主流程；get/refresh 同步抛或拒绝都只
      *   warn（标题是辅助功能，失败静默降级，不冒泡进派发主流程）。 */
     private syncSessionTitle;
+    noteToolText(chatId: ChatId, text: string): void;
+    /**
+     * 回合末正文是否只是把工具刚说过的话又重复一遍（意思层面）。
+     * @returns true 表示重复，正文应丢弃。
+     */
+    isToolTopicDuplicate(chatId: ChatId, text: string): boolean;
+    /** 每回合掷骰决定回合形式：语音条 / 表情包 / 纯文字（概率读配置，默认 10% / 39%）。 */
+    rollTurnForm(): string;
+    /**
+     * 群聊上下文（2026-11-19 本地加）：把一条未 @ 我 / 没叫到唤醒词的群消息记进
+     * 环缓冲，被叫到那一回合按 config.groupContextLines 取最近 N 条注入。
+     */
+    recordGroupContext(chatId: ChatId, entry: {
+        time: number;
+        userId: string;
+        nickname: string;
+        text: string;
+    }): void;
+    /** 本轮要注入的群聊上下文文本（没有返回 undefined）。 */
+    groupContextRecent(chatId: ChatId): string | undefined;
     /**
      * 群聊旁观 (#58)：把一条未通过 @ 门控的群消息喂进旁听缓冲；规则触发命中
      * 且会话空闲时开一次回顾回合（角色固定 member——旁听内容源自群消息，不可信，

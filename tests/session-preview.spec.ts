@@ -10,7 +10,15 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 
 import { SESSION_PREVIEW_MAX_CHARS, sessionPreviewFromEvents, shortSessionId, truncatePreview } from '../src/commands.js'
 import type { SessionPreviewEvent } from '../src/bridge.js'
-import { makeCmdHarness, makeEvent } from './helpers/bridge-harness.js'
+import { makeCmdHarness, makeEvent, outboundTextJoined } from './helpers/bridge-harness.js'
+
+/**
+ * 气泡切分（issue #6）之后一条回复可能是多条消息，条间还有 800–1500ms 停顿：
+ * vi.waitFor 默认 1000ms 常常等不到第二条。这里统一放宽到 15s。
+ */
+const settleWait = (check: () => void, options: { timeout?: number } = {}) =>
+  vi.waitFor(check, { timeout: 15_000, ...options })
+
 
 /** A logged 'user/message' event the way the host stores it: a UserMessage
  * with a discriminating source and content blocks. */
@@ -190,17 +198,17 @@ describe('/session list previews (command e2e)', () => {
     const fake = fakePersistence(handles)
     const h = await makeCmdHarness({ sessionPersistence: fake.stub })
     h.sendText('第一条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(1))
     const s1 = h.sessionIds[0]
     h.sendText('/new')
-    await vi.waitFor(() => {
+    await settleWait(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('已开启新会话'))).toBe(true)
     })
     h.sendText('第二条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(2))
     const s2 = h.sessionIds[1]
     h.sendText('/new')
-    await vi.waitFor(() => {
+    await settleWait(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('已开启新会话'))).toBe(true)
     })
 
@@ -214,8 +222,8 @@ describe('/session list previews (command e2e)', () => {
     }
 
     h.sendText('/session')
-    await vi.waitFor(() => {
-      const text = h.outbound.map(f => JSON.stringify(f.params)).join('\n')
+    await settleWait(() => {
+      const text = outboundTextJoined(h.outbound)
       expect(text).toContain('可切回历史会话：')
       // Newest first; each item: preview（createdAt 建立 · retiredAt 退休 · id）
       expect(text).toContain('1. 第二条 配置语音转写（2026-09-13 11:05 建立 · ')
@@ -241,17 +249,17 @@ describe('/session list previews (command e2e)', () => {
     const fake = fakePersistence(handles)
     const h = await makeCmdHarness({ sessionPersistence: fake.stub })
     h.sendText('第一条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(1))
     const s1 = h.sessionIds[0]
     h.sendText('/new')
-    await vi.waitFor(() => {
+    await settleWait(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('已开启新会话'))).toBe(true)
     })
     h.sendText('第二条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(2))
     const s2 = h.sessionIds[1]
     h.sendText('/new')
-    await vi.waitFor(() => {
+    await settleWait(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('已开启新会话'))).toBe(true)
     })
 
@@ -260,8 +268,8 @@ describe('/session list previews (command e2e)', () => {
     // Break ONLY s1 after both handles were registered.
     fake.flags.failOpenIds.push(s1)
     h.sendText('/session')
-    await vi.waitFor(() => {
-      const text = h.outbound.map(f => JSON.stringify(f.params)).join('\n')
+    await settleWait(() => {
+      const text = outboundTextJoined(h.outbound)
       // Item 2 (s1, oldest) degrades; item 1 (s2) still shows its preview.
       expect(text).toContain('2. （内容不可读）（')
       expect(text).toContain('1. 第二条（2026-09-13 11:05 建立 · ')
@@ -283,16 +291,16 @@ describe('/session list previews (command e2e)', () => {
     fake.flags.failCloseIds.push('onebot-private-10001')
     const h = await makeCmdHarness({ sessionPersistence: fake.stub })
     h.sendText('第一条')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
+    await settleWait(() => expect(h.captured.followups).toHaveLength(1))
     const s1 = h.sessionIds[0]
     h.sendText('/new')
-    await vi.waitFor(() => {
+    await settleWait(() => {
       expect(h.outbound.some(f => JSON.stringify(f.params).includes('已开启新会话'))).toBe(true)
     })
 
     h.sendText('/session')
-    await vi.waitFor(() => {
-      const text = h.outbound.map(f => JSON.stringify(f.params)).join('\n')
+    await settleWait(() => {
+      const text = outboundTextJoined(h.outbound)
       expect(text).toContain('1. （内容不可读）（')
       expect(text).not.toContain(' 建立 ')
       expect(text).toContain('回复 /session <序号> 切回')

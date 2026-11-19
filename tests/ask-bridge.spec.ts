@@ -350,7 +350,9 @@ describe('T2-B1/B3 bridge integration (tool registration + answer interception)'
     await vi.waitFor(() => expect(sentTexts(h.outbound).some(t => t.includes('回复编号或字母选择'))).toBe(true))
 
     h.sendText('1,2')
-    await vi.waitFor(() => expect(sentTexts(h.outbound).some(t => t.includes('已提交回答'))).toBe(true))
+    // 问题卡现在按行切成多条气泡（1 条提示 + 逐选项），条间有 800–1500ms 停顿；
+    // 回执排在卡片后面，默认 1s 的 waitFor 等不到。
+    await vi.waitFor(() => expect(sentTexts(h.outbound).some(t => t.includes('已提交回答'))).toBe(true), { timeout: 10_000 })
     expect(answer).toHaveBeenCalledTimes(1)
     const [agentArg, callId, payload] = answer.mock.calls[0] as [unknown, string, { answers: unknown }]
     expect(callId).toBe('c2')
@@ -454,7 +456,7 @@ describe('T2-B1/B3 bridge integration (tool registration + answer interception)'
       h.sendGroupTextAs(text, 20002)
       await vi.waitFor(() => expect(answer).toHaveBeenCalledTimes(1))
       expect((answer.mock.calls[0] as unknown[])[2]).toEqual(payload)
-      await vi.waitFor(() => expect(sentTexts(h.outbound).some(t => t.includes(ANSWER_ACCEPTED_NOTICE))).toBe(true))
+      await vi.waitFor(() => expect(sentTexts(h.outbound).some(t => t.includes(ANSWER_ACCEPTED_NOTICE))).toBe(true), { timeout: 10_000 })
       expect(h.captured.followups).toHaveLength(1)
 
       h.client.close()
@@ -660,7 +662,8 @@ describe('T3-board foreground instant settle (user-questions/request waterfall)'
     await expect(ask).resolves.toEqual({ answers: [{ id: 'q1', selected: ['方案A', '方案B'] }] })
     // Settled on the waterfall — the pending answer() path stayed idle.
     expect(host.service.answer).not.toHaveBeenCalled()
-    await vi.waitFor(() => expect(sentTexts(h.outbound).some(t => t.includes(ANSWER_ACCEPTED_NOTICE))).toBe(true))
+    // 回执排在问题卡的多条气泡后面（条间 800–1500ms），默认 1s 等不到。
+    await vi.waitFor(() => expect(sentTexts(h.outbound).some(t => t.includes(ANSWER_ACCEPTED_NOTICE))).toBe(true), { timeout: 10_000 })
 
     h.client.close()
     await h.bridge.stop()
@@ -742,7 +745,8 @@ describe('T3-board foreground instant settle (user-questions/request waterfall)'
     // await order leaves the wait unregistered exactly here.
     await vi.waitFor(() => expect(host.service.attachWait).toHaveBeenCalledTimes(1))
     h.sendText('1,2')
-    await vi.waitFor(() => expect(sentTexts(h.outbound).some(t => t.includes(ANSWER_ACCEPTED_NOTICE))).toBe(true))
+    // 同上：卡片气泡之间有停顿，回执要等整批发完。
+    await vi.waitFor(() => expect(sentTexts(h.outbound).some(t => t.includes(ANSWER_ACCEPTED_NOTICE))).toBe(true), { timeout: 10_000 })
     releaseAttach()
     await expect(ask).resolves.toEqual({ answers: [{ id: 'q1', selected: ['方案A', '方案B'] }] })
     // Settled on the waterfall — the pending answer() path stayed idle.

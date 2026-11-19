@@ -210,10 +210,30 @@ export interface Config {
         deferredTimeout?: boolean | string;
         rateLimited?: boolean | string;
     };
-    /** T14 (#6 补充): qq_send_segments 插件页开关与分段发送间隔（呼吸感）。 */
-    segments: {
+    /** 回合形式掷骰（本地加 2026-11-18）：语音条 / 表情包的开关与概率。 */
+    voiceReplyEnabled: boolean;
+    voiceReplyProb: number;
+    stickerReplyEnabled: boolean;
+    stickerReplyProb: number;
+    /** 表情包库根目录；空串 = DEFAULT_STICKER_ROOT（~/.dsh/dsh-onebot-genji/stickers）。 */
+    stickerRoot: string;
+    stickerAutoCollect: boolean;
+    /** 主动搭话（本地加 2026-11-19，原 startup/qq-alive.mjs 合并进插件）。 */
+    proactive: {
         enabled: boolean;
-        intervalMs: number;
+        targetUsers: string[];
+        minIdleMinutes: number;
+        minGapMinutes: number;
+        maxPerDay: number;
+        quietFrom: number;
+        quietTo: number;
+        attemptGapMinutes: number;
+        burstProb: number;
+        followupEnabled: boolean;
+        followupMinSec: number;
+        followupMaxSec: number;
+        followupProb: number;
+        followupMaxPerDay: number;
     };
     /** Per-chat per-minute sliding-window cap for normal (non-command) messages; 0 disables. */
     rateLimitPerMinute: number;

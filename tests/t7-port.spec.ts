@@ -254,7 +254,8 @@ describe('T7 桥接：开关开/关两侧', () => {
     const h = await makeHarness({ inboxQueueEnabled: true, inboxQueueDelayMs: 80 })
     h.sendText('/help')
     h.sendText('跟着命令的普通消息')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
+    // 命令回执现在是多条气泡（条间 800–1500ms），排队窗口要等聊天空出来才放行。
+    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1), { timeout: 15_000 })
     expect(h.captured.followups[0].text).not.toContain('/help')
     // /help 走命令路由立即回执（不被 80ms 窗口拖住）
     await vi.waitFor(() => expect(h.outbound.some(f => JSON.stringify(f.params).includes('可用命令'))).toBe(true))
@@ -283,8 +284,19 @@ describe('T7 设置键：inboxQueueEnabled/inboxQueueDelayMs', () => {
     expect(() => validatePatch({ inboxQueueEnabled: 'yes' })).toThrow()
   })
 
-  it('behavior 组键序：deferredTimeoutMs 之后追加两键（0.10.0 重排后组尾再续 ignoreSelf/sidebarEntryEnabled）', () => {
-    expect(SETTINGS_GROUPS.behavior.slice(-5)).toEqual(['inboxQueueEnabled', 'inboxQueueDelayMs', 'titleSyncEnabled', 'ignoreSelf', 'sidebarEntryEnabled'])
-    expect(SETTINGS_GROUPS.behavior.slice(-7, -5)).toEqual(['autoSteerPolicy', 'deferredTimeoutMs'])
+  it('behavior 组键序：deferredTimeoutMs 之后追加两键（0.10.0 重排后组尾再续 ignoreSelf/sidebarEntryEnabled；11.19 掷骰四键紧跟 rateLimitPerMinute、14 键 proactive 在组尾）', () => {
+    // 2026-11-19：回合形式掷骰的四个键紧跟在 rateLimitPerMinute 后面。
+    expect(SETTINGS_GROUPS.behavior.slice(5, 10)).toEqual([
+      'rateLimitPerMinute', 'voiceReplyEnabled', 'voiceReplyProb', 'stickerReplyEnabled', 'stickerReplyProb',
+    ])
+    // 主动搭话 14 个扁平 proactiveXxx 落在组尾。
+    expect(SETTINGS_GROUPS.behavior.slice(-14)).toEqual([
+      'proactiveEnabled', 'proactiveTargetUsers', 'proactiveMinIdleMinutes', 'proactiveMinGapMinutes',
+      'proactiveMaxPerDay', 'proactiveQuietFrom', 'proactiveQuietTo', 'proactiveAttemptGapMinutes',
+      'proactiveBurstProb', 'proactiveFollowupEnabled', 'proactiveFollowupMinSec',
+      'proactiveFollowupMaxSec', 'proactiveFollowupProb', 'proactiveFollowupMaxPerDay',
+    ])
+    expect(SETTINGS_GROUPS.behavior.slice(-19, -14)).toEqual(['inboxQueueEnabled', 'inboxQueueDelayMs', 'titleSyncEnabled', 'ignoreSelf', 'sidebarEntryEnabled'])
+    expect(SETTINGS_GROUPS.behavior.slice(-21, -19)).toEqual(['autoSteerPolicy', 'deferredTimeoutMs'])
   })
 })

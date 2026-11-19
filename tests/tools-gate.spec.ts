@@ -293,7 +293,7 @@ describe('qq_* member-tier tool gate (权限分档 A2)', () => {
     const h = await makeHarness({ memberTools: 'none' })
     const sessionId = 'sess-gate-early'
     h.seed(sessionId, 'member')
-    await expect(h.tool('qq_send_segments').execute({ segments: [] }, h.exec(sessionId)))
+    await expect(h.tool('qq_send_voice').execute({ path: '/etc/passwd' }, h.exec(sessionId)))
       .rejects.toThrow('当前发言人为成员档位')
     expect(h.calls).toHaveLength(0)
   })
@@ -355,10 +355,6 @@ describe('qq_send_* memberTools=send 中间档 (#59)', () => {
     await expect(h.tool('qq_send_text').execute({ text: '分条回答' }, h.exec(sessionId)))
       .rejects.toThrow(/WebSocket not connected/)
     expect(h.calls.filter(c => c.action === 'send_msg')).toHaveLength(0)
-    // qq_send_segments：放行（两段两条气泡，经 connection.call 桩记录）。
-    const segs = await h.tool('qq_send_segments').execute({ segments: ['一段', '二段'] }, h.exec(sessionId)) as { sent: boolean }
-    expect(segs.sent).toBe(true)
-    expect(h.calls.filter(c => c.action === 'send_msg')).toHaveLength(2)
     // qq_send_image（URL 源，不碰围栏）：放行。
     const img = await h.tool('qq_send_image').execute({ sources: ['https://example.com/pic.jpg'] }, h.exec(sessionId)) as { sent: boolean }
     expect(img.sent).toBe(true)
@@ -388,154 +384,12 @@ describe('qq_send_* memberTools=send 中间档 (#59)', () => {
     const h = await makeHarness({ memberTools: 'send' })
     const sessionId = 'sess-send-admin'
     h.seed(sessionId, 'admin')
-    // admin 档恒为 all：qq_send_segments（管理员专属语义之外的任意工具均可）
-    // 正常发送即证守卫未拦。
-    const result = await h.tool('qq_send_segments').execute({ segments: ['管理员'] }, h.exec(sessionId)) as { sent: boolean }
+    const result = await h.tool('qq_send_image').execute({ sources: ['https://example.com/pic.jpg'] }, h.exec(sessionId)) as { sent: boolean }
     expect(result.sent).toBe(true)
     expect(h.calls.filter(c => c.action === 'send_msg')).toHaveLength(1)
   })
 })
 
-describe('qq_send_segments (T10 #6)', () => {
-  it('sends each segment as its own separate send_msg bubble, in order', async () => {
-    const h = await makeHarness()
-    h.seed('group-seg-1', 'admin')
-    const sessionId = 'group-seg-1'
-    const result = await h.tool('qq_send_segments').execute({
-      segments: ['第一段', '第二段', '第三段'],
-    }, h.exec(sessionId)) as { sent: boolean; count: number; messageIds: Array<string | null> }
-    expect(result.sent).toBe(true)
-    expect(result.count).toBe(3)
-    const sends = h.calls.filter(c => c.action === 'send_msg')
-    expect(sends).toHaveLength(3)
-    expect(sends.map(s => (s.params.message as Array<{ data: { text: string } }>)[0].data.text))
-      .toEqual(['第一段', '第二段', '第三段'])
-  })
-
-  it('#23 point 1: strips Markdown from each segment before sending', async () => {
-    const h = await makeHarness()
-    const sessionId = 'group-seg-md'
-    h.seed(sessionId, 'admin')
-    const result = await h.tool('qq_send_segments').execute({
-      segments: ['**加粗**的段', '# 标题段', '带 \x60代码\x60 的段'],
-    }, h.exec(sessionId)) as { count: number }
-    expect(result.count).toBe(3)
-    const sends = h.calls.filter(c => c.action === 'send_msg')
-    expect(sends.map(s => (s.params.message as Array<{ data: { text: string } }>)[0].data.text))
-      .toEqual(['加粗的段', '标题段', '带 代码 的段'])
-  })
-
-  it('rejects empty, over-count, and over-length inputs without sending', async () => {
-    const h = await makeHarness()
-    h.seed('group-seg-2', 'admin')
-    const sessionId = 'group-seg-2'
-    const tool = h.tool('qq_send_segments')
-    await expect(tool.execute({ segments: [] }, h.exec(sessionId)))
-      .rejects.toThrow('qq_send_segments: segments 不能为空')
-    await expect(tool.execute({ segments: ['   ', '\n\t'] }, h.exec(sessionId)))
-      .rejects.toThrow('qq_send_segments: segments 不能为空')
-    await expect(tool.execute({ segments: Array.from({ length: 10 }, (_, i) => '段' + i) }, h.exec(sessionId)))
-      .rejects.toThrow('qq_send_segments: 一次最多 9 段')
-    await expect(tool.execute({ segments: ['好'.repeat(501)] }, h.exec(sessionId)))
-      .rejects.toThrow('qq_send_segments: 每段最多 500 字')
-    expect(h.calls.filter(c => c.action === 'send_msg')).toHaveLength(0)
-  })
-})
-
-/**
- * T14 (#6 补充): qq_send_segments 插件页开关 + 发送间隔。全部用 fake timers
- * 断言延时行为——绝不真实 sleep 多秒（deferred/inject 有真实计时 flaky 先例）。
- * 默认（intervalMs=0）完全不排定时器：若实现误排 setTimeout，await 会挂起
- * 直到测试超时，本身就是失败信号。
- */
-describe('qq_send_segments 开关与发送间隔 (T14 #6)', () => {
-  it('default intervalMs=0 keeps 0.9.10 behavior: no delay timers, sends in order', async () => {
-    vi.useFakeTimers()
-    try {
-      const h = await makeHarness() // undefined → 模块默认 { enabled: true, intervalMs: 0 }
-      h.seed('group-seg-d0', 'admin')
-      const result = await h.tool('qq_send_segments').execute({
-        segments: ['一', '二', '三'],
-      }, h.exec('group-seg-d0')) as { sent: boolean; count: number }
-      expect(result.sent).toBe(true)
-      expect(result.count).toBe(3)
-      expect(h.calls.filter(c => c.action === 'send_msg')).toHaveLength(3)
-      expect(vi.getTimerCount()).toBe(0)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('enabled=false leaves qq_send_segments unregistered (other tools intact)', async () => {
-    const h = await makeHarness({ segments: { enabled: false, intervalMs: 0 } })
-    expect(() => h.tool('qq_send_segments')).toThrow('tool not registered: qq_send_segments')
-    expect(h.tool('qq_send_image')).toBeTruthy()
-    expect(h.tool('qq_send_forward')).toBeTruthy()
-  })
-
-  it('global intervalMs waits between consecutive segments (fake timers, no real sleep)', async () => {
-    vi.useFakeTimers()
-    try {
-      const h = await makeHarness({ segments: { enabled: true, intervalMs: 40 } })
-      h.seed('group-seg-gi', 'admin')
-      const pending = h.tool('qq_send_segments').execute({
-        segments: ['甲', '乙', '丙'],
-      }, h.exec('group-seg-gi')) as Promise<{ count: number }>
-      // 推进 1ms：第一段已发，第二个段还卡在 40ms 间隔定时器上（证明等待真实生效）。
-      await vi.advanceTimersByTimeAsync(1)
-      expect(h.calls.filter(c => c.action === 'send_msg')).toHaveLength(1)
-      await vi.advanceTimersByTimeAsync(1000)
-      const result = await pending
-      expect(result.count).toBe(3)
-      expect(h.calls.filter(c => c.action === 'send_msg')).toHaveLength(3)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('tool intervalMs overrides the global default (0 override = no delay timers)', async () => {
-    vi.useFakeTimers()
-    try {
-      const h = await makeHarness({ segments: { enabled: true, intervalMs: 999 } })
-      h.seed('group-seg-ov', 'admin')
-      const result = await h.tool('qq_send_segments').execute({
-        segments: ['甲', '乙'],
-        intervalMs: 0,
-      }, h.exec('group-seg-ov')) as { count: number }
-      expect(result.count).toBe(2)
-      expect(h.calls.filter(c => c.action === 'send_msg')).toHaveLength(2)
-      expect(vi.getTimerCount()).toBe(0)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('clamps out-of-range tool intervalMs into 0–3000 (5000 → 3000)', async () => {
-    vi.useFakeTimers()
-    try {
-      const h = await makeHarness() // 全局默认 0，仅参数超界
-      h.seed('group-seg-cl', 'admin')
-      const pending = h.tool('qq_send_segments').execute({
-        segments: ['甲', '乙'],
-        intervalMs: 5000,
-      }, h.exec('group-seg-cl')) as Promise<{ count: number }>
-      // clamp 后单段间隔 = 3000ms：推进到 3000 应完成发送；未 clamp（5000）则不会。
-      await vi.advanceTimersByTimeAsync(SEGMENTS_INTERVAL_MAX_MS)
-      const result = await pending
-      expect(result.count).toBe(2)
-      expect(h.calls.filter(c => c.action === 'send_msg')).toHaveLength(2)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-})
-
-/**
- * SnowLuma 适配第一批（T1）：qq_group_history 的翻页锚点必须以 message_id
- * 发给协议端（SnowLuma 只认 message_id，不认 NapCat 旧名 message_seq），
- * 以及 sendMsg 出站管线在协议端收口处过滤空/纯空白 text 段（SnowLuma
- * 校验拒绝空白文本段）。
- */
 describe('SnowLuma 适配：翻页锚点与空白 text 段 (T1 #2/#7)', () => {
   it('qq_group_history sends the anchor as message_id (not message_seq) to the protocol side', async () => {
     const h = await makeHarness({
@@ -610,88 +464,5 @@ describe('SnowLuma 适配：翻页锚点与空白 text 段 (T1 #2/#7)', () => {
     ])
     expect(id).toBeUndefined()
     expect(h.calls.filter(c => c.action === 'send_msg')).toHaveLength(0)
-  })
-})
-
-/**
- * PR #25 评审后续（T1 B1/S2/S3）：qq_send_image 的 caption 接入出站同源
- * 清洗（./split.js 的 stripMarkdown，与 outbound / qq_send_segments 同源）；
- * qq_send_segments「清洗后全空抛错」与「部分段被丢弃后 count 递减」两个
- * 此前零覆盖的分支补用例；段被丢弃时输出一条可 grep 的 info 日志。
- */
-describe('qq_send_image caption 清洗 + qq_send_segments 丢弃分支与丢弃日志 (T1 #25 B1/S2/S3)', () => {
-  it('B1: caption is stripped with the same stripMarkdown as outbound/segments', async () => {
-    const h = await makeHarness()
-    const sessionId = 'group-caption-md'
-    h.seed(sessionId, 'admin')
-    const result = await h.tool('qq_send_image').execute({
-      sources: ['https://example.com/pic.jpg'],
-      caption: '**加粗说明** 和 \x60代码\x60',
-    }, h.exec(sessionId)) as { sent: boolean }
-    expect(result.sent).toBe(true)
-    const send = h.calls.find(c => c.action === 'send_msg')!
-    expect(send.params.message).toEqual([
-      { type: 'text', data: { text: '加粗说明 和 代码' } },
-      { type: 'image', data: { url: 'https://example.com/pic.jpg' } },
-    ])
-  })
-
-  it('B1: caption that strips to empty is dropped (image still sent, no error)', async () => {
-    const h = await makeHarness()
-    const sessionId = 'group-caption-empty'
-    h.seed(sessionId, 'admin')
-    const result = await h.tool('qq_send_image').execute({
-      sources: ['https://example.com/pic.jpg'],
-      caption: '#  ',
-    }, h.exec(sessionId)) as { sent: boolean }
-    expect(result.sent).toBe(true)
-    const send = h.calls.find(c => c.action === 'send_msg')!
-    expect(send.params.message).toEqual([
-      { type: 'image', data: { url: 'https://example.com/pic.jpg' } },
-    ])
-  })
-
-  it('S2: rejects with the dedicated error when every segment strips to empty (nothing sent)', async () => {
-    const h = await makeHarness()
-    const sessionId = 'group-seg-all-empty'
-    h.seed(sessionId, 'admin')
-    await expect(h.tool('qq_send_segments').execute({
-      segments: ['#  ', '**  **', '---'],
-    }, h.exec(sessionId)))
-      .rejects.toThrow('qq_send_segments: 去掉 Markdown 后没有可发送内容')
-    expect(h.calls.filter(c => c.action === 'send_msg')).toHaveLength(0)
-    // 全空分支在丢弃日志之前抛错：不应输出丢弃日志。
-    expect(h.logs).toHaveLength(0)
-  })
-
-  it('S2+S3: partially-dropped segments decrement count and log one grepable line', async () => {
-    const h = await makeHarness()
-    const sessionId = 'group-seg-partial'
-    h.seed(sessionId, 'admin')
-    const result = await h.tool('qq_send_segments').execute({
-      segments: ['第一段', '#  ', '**  **', '第三段'],
-    }, h.exec(sessionId)) as { sent: boolean; count: number; messageIds: Array<string | null> }
-    expect(result.sent).toBe(true)
-    expect(result.count).toBe(2)
-    expect(result.messageIds).toEqual(['42', '42'])
-    const sends = h.calls.filter(c => c.action === 'send_msg')
-    expect(sends).toHaveLength(2)
-    expect(sends.map(s => (s.params.message as Array<{ data: { text: string } }>)[0].data.text))
-      .toEqual(['第一段', '第三段'])
-    // S3: 仅丢弃时输出一条 info 级、可 grep 的日志（含工具名、丢弃数与 chat）。
-    expect(h.logs).toHaveLength(1)
-    expect(h.logs[0].level).toBe('info')
-    expect(h.logs[0].message).toBe('qq_send_segments: 2/4 段 Markdown 清洗后为空，已丢弃: chat=group:20001')
-  })
-
-  it('S3: no drop log when every segment survives cleaning (no log spam)', async () => {
-    const h = await makeHarness()
-    const sessionId = 'group-seg-clean'
-    h.seed(sessionId, 'admin')
-    const result = await h.tool('qq_send_segments').execute({
-      segments: ['第一段', '第二段'],
-    }, h.exec(sessionId)) as { count: number }
-    expect(result.count).toBe(2)
-    expect(h.logs).toHaveLength(0)
   })
 })

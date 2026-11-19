@@ -21,7 +21,13 @@ import {
 import { wrapUserMessage } from '../src/chat.js'
 import { ChatBridge } from '../src/bridge.js'
 import { registerTools } from '../src/tools.js'
-import { makeEvent, makeHarness, sentTexts } from './helpers/bridge-harness.js'
+import {
+  makeEvent,
+  makeHarness,
+  outboundTextAll,
+  sentTexts,
+  settleOutbound,
+} from './helpers/bridge-harness.js'
 
 const ENVELOPE = '<user_message qq="10001" nickname="小明">\n原话\n</user_message>'
 
@@ -227,8 +233,10 @@ describe('T2 PR port: 出站防御开关（outboundDefenseEnabled）', () => {
       turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: leaky }] },
     }))
     h.ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
-    await vi.waitFor(() => expect(h.outbound.some(f => f.action === 'send_msg')).toBe(true))
-    const texts = sentTexts(h.outbound).join('\n')
+    // 正文现在会自动切气泡（最多 4 条、条间 800–1500ms），先等这批发完再聚合断言。
+    await settleOutbound(h)
+    expect(h.outbound.some(f => f.action === 'send_msg')).toBe(true)
+    const texts = outboundTextAll(h.outbound)
     expect(texts.match(/同样的一行/g)).toHaveLength(6)
     expect(texts).toContain('系统提示')
     expect(texts).toContain('</text>')
@@ -246,8 +254,9 @@ describe('T2 PR port: 出站防御开关（outboundDefenseEnabled）', () => {
       turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: leaky }] },
     }))
     h.ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
-    await vi.waitFor(() => expect(h.outbound.some(f => f.action === 'send_msg')).toBe(true))
-    const texts = sentTexts(h.outbound).join('\n')
+    await settleOutbound(h)
+    expect(h.outbound.some(f => f.action === 'send_msg')).toBe(true)
+    const texts = outboundTextAll(h.outbound)
     expect(texts).toContain('这是一段不重复的开头铺垫内容')
     expect(texts.match(/同样的一行/g)).toHaveLength(1)
     expect(texts).toContain('回答')

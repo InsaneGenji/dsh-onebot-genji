@@ -105,6 +105,11 @@ describe('T1 PR port: 唤醒词端到端', () => {
 describe('T1 PR port: 私聊时间前缀取 event.time', () => {
   it('renders [HH:MM] from the message time, not the processing time', async () => {
     const h = await makeHarness()
+    // 回合形式掷骰（语音条 10% / 表情包 39%）会给 followup 追加第二段提示词，
+    // 「正文恰好等于 X」的断言必须先关掉两枚骰子。
+    const bridgeConfig = (h.bridge as unknown as { deps: { config: Record<string, unknown> } }).deps.config
+    bridgeConfig.voiceReplyEnabled = false
+    bridgeConfig.stickerReplyEnabled = false
     // 固定 event.time：本地时区渲染，与 formatClock 同一换算。
     const at = new Date(2026, 10, 9, 21, 5, 0).getTime() / 1000
     h.client.send(JSON.stringify({
