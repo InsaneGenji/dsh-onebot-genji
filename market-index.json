@@ -75,12 +75,12 @@
       },
       "versions": [
         {
-          "version": "0.15.1",
-          "publishTimestamp": 1795139889,
+          "version": "0.15.2",
+          "publishTimestamp": 1795147895,
           "source": {
             "type": "git",
             "url": "https://github.com/InsaneGenji/dsh-onebot-genji",
-            "commit": "a1296862a6ddf374e89fc13adbca6da32dcfd5fa"
+            "commit": "488696d365755083d450da0e7b8a497cee94931c"
           },
           "engines": {
             "dsh": ">=0.1.5-rc.1 <0.3.0-0"
