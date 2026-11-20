@@ -178,6 +178,40 @@ describe('inbound pipeline', () => {
     await h.connection.stop()
   })
 
+  it('expands a merged forward that sits inside a quote, not just a top-level one (2026-11-20 群里引用聊天记录)', async () => {
+    const h = await makeHarness()
+    const real = h.connection.call.bind(h.connection)
+    h.connection.call = (async (action: string, params: Record<string, unknown>) => {
+      if (action === 'get_msg') {
+        return {
+          sender: { user_id: 20002, nickname: '臭番薯' },
+          message: [{ type: 'forward', data: { id: 'fwd-quoted' } }],
+        }
+      }
+      if (action === 'get_forward_msg') {
+        return {
+          messages: [
+            { type: 'node', data: { user_id: 10001, nickname: '小明', message: [{ type: 'text', data: { text: '第一句' } }] } },
+            { type: 'node', data: { user_id: 20002, nickname: '小红', message: [{ type: 'text', data: { text: '第二句' } }] } },
+          ],
+        }
+      }
+      return await real(action, params)
+    }) as never
+    h.client.send(JSON.stringify({
+      post_type: 'message', message_type: 'private', user_id: 10001, self_id: 10002,
+      message: [{ type: 'reply', data: { id: 666 } }, { type: 'text', data: { text: '品鉴一下' } }],
+      raw_message: '', sender: { user_id: 10001, nickname: '小明' },
+    }))
+    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
+    const text = h.captured.followups[0].text
+    // 引用里的转发必须被真正展开：裸的 "[合并转发]" 是模型打不开的那张空白卡片。
+    expect(text).toContain('[引用]臭番薯: [合并转发 id=fwd-quoted]\n小明: 第一句\n小红: 第二句')
+    h.client.close()
+    await h.bridge.stop()
+    await h.connection.stop()
+  })
+
   it('expands a forward message through NapCat node format (get_forward_msg with id+message_id)', async () => {
     const h = await makeHarness()
     const forwardCalls: Array<Record<string, unknown>> = []

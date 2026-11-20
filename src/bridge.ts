@@ -26,7 +26,7 @@ import type { Transcriber } from './stt.js'
 import { transcriptLabel } from './stt.js'
 import type { MediaRef } from './cq.js'
 import type { ChatId, UserRole } from './chat.js'
-import { buildChatId, classifyUserRole, splitChatId } from './chat.js'
+import { buildChatId, classifyUserRole, formatClock, splitChatId } from './chat.js'
 import type { AccessPolicyConfig } from './chat.js'
 import { buildPlatformPrompt } from './prompt.js'
 import { PromptLoader } from './prompt-setup.js'
@@ -94,11 +94,9 @@ function stickerHintFor(config: BridgeConfig): string {
  *  被 @ / 叫到唤醒词那一回合作为参考材料注入 prefixTurn。 */
 const GROUP_CONTEXT_CAP = 200
 
-/** 群聊上下文行首的 HH:MM（本地时区，非数字时间戳回落当前时间）。 */
-function formatHhMm(ts: number): string {
-  const d = new Date(Number.isFinite(ts) ? ts : Date.now())
-  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
-}
+/** 群聊上下文行首的 HH:MM：直接复用 chat.ts 的 formatClock（entry.time 是
+ *  OneBot event.time，Unix **秒**）。别再本地复制一份——T1 修过的「把秒当毫秒
+ *  用、时间显示成 1970 年」那个坑，2026-11-20 就在这里重犯过一次。 */
 
 /** T2-B2: how long a relayed ask_user_question batch stays interceptable —
  * after this the bridge stops treating plain replies as answers (the host's
@@ -1109,7 +1107,7 @@ export class ChatBridge {
     }
     const body = String(entry.text ?? '').trim()
     if (body === '') return
-    list.push('[' + formatHhMm(entry.time) + '] ' + entry.nickname + '(' + entry.userId + '): ' + body)
+    list.push('[' + formatClock(entry.time) + '] ' + entry.nickname + '(' + entry.userId + '): ' + body)
     while (list.length > cap) list.shift()
   }
 

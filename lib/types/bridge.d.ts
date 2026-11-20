@@ -30,6 +30,9 @@ export declare const QUEUE_NOTICE_TEXT = "\u23F3 \u5F53\u524D\u4EFB\u52A1\u8FD0\
 export declare const VOICE_PROB = 0.1;
 export declare const STICKER_PROB = 0.39;
 export declare const VOICE_HINT: string;
+/** 群聊上下文行首的 HH:MM：直接复用 chat.ts 的 formatClock（entry.time 是
+ *  OneBot event.time，Unix **秒**）。别再本地复制一份——T1 修过的「把秒当毫秒
+ *  用、时间显示成 1970 年」那个坑，2026-11-20 就在这里重犯过一次。 */
 /** T2-B2: how long a relayed ask_user_question batch stays interceptable —
  * after this the bridge stops treating plain replies as answers (the host's
  * continued-state question may still be answered from the Web card). */

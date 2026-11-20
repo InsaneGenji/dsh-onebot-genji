@@ -743,7 +743,29 @@ export class InboundPipeline {
           // 单图失败静默跳过：引用展开的主路径（文字）不受影响。
         }
       }
-      const withImages = imageNotes.length > 0 ? text + '\n' + imageNotes.join('\n') : text
+      // 引用里可能就是一张合并转发卡片：被引用消息的段里是 forward，而
+      // segmentText 只给裸的 "[合并转发]"、把 id 丢了 —— 模型看到的是一张
+      // 空白卡片（2026-11-20 群里「品鉴一下」引用了聊天记录，收到就是
+      // "[引用]，: [合并转发]"）。这里把被引用消息里的 forward 段真正展开，
+      // 替换掉那个裸标签；展开失败只是保留原样，不影响引用里的其它文字。
+      const forwardTexts: string[] = []
+      for (const segment of segments ?? []) {
+        if (segment?.type !== 'forward') continue
+        const fid = segment.data?.id ?? segment.data?.resId
+        if (fid === undefined || fid === null || String(fid) === '') continue
+        try {
+          const expanded = await this.expandForward(String(fid))
+          if (expanded.text.trim() !== '') forwardTexts.push(expanded.text)
+        } catch {
+          // 单条转发展开失败静默跳过。
+        }
+      }
+      const base = imageNotes.length > 0 ? text + '\n' + imageNotes.join('\n') : text
+      const withImages = forwardTexts.length === 0
+        ? base
+        : (base.includes('[合并转发]')
+          ? base.replace('[合并转发]', forwardTexts.join('\n'))
+          : forwardTexts.join('\n') + '\n' + base)
       if (withImages.trim() === '') return ''
       const name = data.sender?.nickname ?? ''
       return '[引用]' + (name !== '' ? name + ': ' : '') + withImages

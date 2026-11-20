@@ -5,7 +5,7 @@
  * @module dsh-onebot/tests/commands
  */
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, realpathSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,8 +19,10 @@ import { makeCmdHarness, outboundTextJoined, settleOutbound } from './helpers/br
 vi.setConfig({ testTimeout: 60_000 })
 
 describe('commands', () => {
-  it('packageVersion resolves 0.15.0 under ESM (no "?")', () => {
-    expect(packageVersion()).toBe('0.15.0')
+  it('packageVersion resolves the package.json version under ESM (no "?")', () => {
+    // 别再硬编码版本号：每次发版都要跟着改测试，漏了就红（0.15.1 就这么红过一次）。
+    const declared = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
+    expect(packageVersion()).toBe(declared.version)
   })
 
   it('routes slash commands before the model: /new opens a fresh session', async () => {
