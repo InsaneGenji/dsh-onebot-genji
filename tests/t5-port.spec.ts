@@ -38,14 +38,15 @@ describe('T5 键表完整性（SCHEMA_DEFAULTS 与 schema 无孤儿键）', () =
   const resolved = Config({}) as Record<string, unknown>
   const groupKeys = Object.values(SETTINGS_GROUPS).flat()
 
-  it('七组结构（T8/T11/T24 增键 + 0.10.0 重排方案 A + #59 memberTools + T1 reaction + 11.18 allowAllUsers/旁观组下架 + 11.19 掷骰/表情包/主动搭话）：connection 6 / permissions 18 / behavior 32 / stickers 2 / session 11 / media 17 / diagnostics 7', () => {
+  it('七组结构（T8/T11/T24 增键 + 0.10.0 重排方案 A + #59 memberTools + T1 reaction + 11.18 allowAllUsers/旁观组下架 + 11.19 掷骰/表情包/主动搭话 + 11.22 删补话五键）：connection 6 / permissions 18 / behavior 27 / stickers 2 / session 11 / media 17 / diagnostics 7', () => {
     expect(Object.keys(SETTINGS_GROUPS)).toEqual(['connection', 'permissions', 'behavior', 'stickers', 'session', 'media', 'diagnostics'])
     expect(SETTINGS_GROUPS.connection).toHaveLength(6) // 0.10.0 重排：连接=通道配置（-8 键）
     expect(SETTINGS_GROUPS.permissions).toHaveLength(18) // 本地加：+groupContextLines // #59：+memberTools；T1 reaction：+reactionOnMention/reactionEmoji；2026-11-18：allowAllUsers 从面板摘掉 -1
     // 2026-11-19 本地加 18 键：voiceReplyEnabled/voiceReplyProb/stickerReplyEnabled/stickerReplyProb
-    //（紧跟 rateLimitPerMinute）+ 14 个扁平 proactiveXxx（组尾）
-    expect(SETTINGS_GROUPS.behavior).toHaveLength(32)
-    // 2026-11-18：「旁观」整组退出组表（schema/DEFAULTS/ALL_KEYS 的 5 键保留，老配置照样能读）
+    //（紧跟 rateLimitPerMinute）+ 14 个扁平 proactiveXxx（组尾）；2026-11-22 删掉补话五键，
+    //  组尾只剩 9 个 proactiveXxx → 32→27。
+    expect(SETTINGS_GROUPS.behavior).toHaveLength(27)
+    // 2026-11-18：「旁观」整组退出组表；2026-11-20：整套删除（schema/ALL_KEYS/DEFAULTS 里也没了）
     expect(SETTINGS_GROUPS).not.toHaveProperty('bystander')
     expect(SETTINGS_GROUPS.behavior).toEqual(expect.arrayContaining(['inboxQueueEnabled', 'inboxQueueDelayMs', 'titleSyncEnabled']))
     // 2026-11-19：表情包库单独成组（列表/审核走 remote 方法，只有两个面板键）。
@@ -54,10 +55,10 @@ describe('T5 键表完整性（SCHEMA_DEFAULTS 与 schema 无孤儿键）', () =
     expect(SETTINGS_GROUPS.media).toHaveLength(17) // T6：+gifFramesEnabled；0.10.0：+allowPrivateHosts
     expect(SETTINGS_GROUPS.media).toContain('gifFramesEnabled')
     expect(SETTINGS_GROUPS.diagnostics).toHaveLength(7)
-    // 旁观 5 键仍在 schema 键表里（只是不再有面板分组）
+    // 旁观 5 键 2026-11-20 已从 schema 里整套删除（面板、键表、默认值都不再有）
     for (const key of ['bystanderEnabled', 'bystanderCapacity', 'bystanderCooldownMinutes', 'bystanderDailyLimit', 'bystanderTopics']) {
-      expect(ALL_KEYS).toContain(key)
-      expect(Object.hasOwn(SCHEMA_DEFAULTS, key)).toBe(true)
+      expect(ALL_KEYS).not.toContain(key)
+      expect(Object.hasOwn(SCHEMA_DEFAULTS, key)).toBe(false)
     }
   })
 

@@ -374,12 +374,13 @@ describe('detectExplicitMention', () => {
   })
 })
 
-describe('detectWakeName (T1 PR port: 唤醒词门)', () => {
-  it('hits only when the message starts with a wake name', () => {
+describe('detectWakeName (2026-11-20 恢复句中命中)', () => {
+  it('hits when the message contains a wake name anywhere', () => {
     expect(detectWakeName('小雪 今天天气怎么样', ['小雪'])).toBe(true)
-    // Substring in the middle/end must NOT trigger (startsWith, not includes).
-    expect(detectWakeName('今天小雪好吗', ['小雪'])).toBe(false)
-    expect(detectWakeName('帮我看下小雪', ['小雪'])).toBe(false)
+    // 2026-11-20 主人要求：句中出现也算——「大鱼」里的「鱼」要能叫醒。
+    expect(detectWakeName('今天小雪好吗', ['小雪'])).toBe(true)
+    expect(detectWakeName('帮我看下小雪', ['小雪'])).toBe(true)
+    expect(detectWakeName('大鱼', ['鱼'])).toBe(true)
   })
   it('is case-insensitive and trims the message ends', () => {
     expect(detectWakeName('  Snow 帮我查一下', ['snow'])).toBe(true)
@@ -395,7 +396,7 @@ describe('detectWakeName (T1 PR port: 唤醒词门)', () => {
   })
   it('matches against the longest shared-prefix names independently', () => {
     expect(detectWakeName('小雪球 来玩', ['小雪', '小雪球'])).toBe(true)
-    expect(detectWakeName('小 来玩', ['小雪', '小雪球'])).toBe(false)
+    expect(detectWakeName('小雪 来玩', ['小雪', '小雪球'])).toBe(true)
   })
 })
 

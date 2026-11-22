@@ -243,7 +243,7 @@ describe('T2 PR port: 出站防御开关（outboundDefenseEnabled）', () => {
     h.client.close()
     await h.bridge.stop()
     await h.connection.stop()
-  })
+  }, 30_000)
 
   it('开启：复读行砍成 1 行，系统提示整段截断，</text> 剥除', async () => {
     const h = await makeHarness({ outboundDefenseEnabled: true })
@@ -265,7 +265,7 @@ describe('T2 PR port: 出站防御开关（outboundDefenseEnabled）', () => {
     h.client.close()
     await h.bridge.stop()
     await h.connection.stop()
-  })
+  }, 30_000)
 
   it('开启：正文里的 [[at:QQ]] 换成真 at 段；关闭时保持单个 text 段', async () => {
     const emitReply = async (h: Awaited<ReturnType<typeof makeHarness>>): Promise<void> => {

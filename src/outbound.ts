@@ -225,22 +225,52 @@ export function splitAtSegments(text: string): OutboundSegment[] {
  * 5. 单轮最多 4 条，多出来的并到最后一条（防刷屏）。
  * 发送侧的呼吸停顿在 sendToChat 里做（首条立即，其后 800–1500ms 随机）。
  */
+/**
+ * 剥掉一条气泡末尾的中文句号（2026-11-22 主人要求：聊天里句末别挂「。」）。
+ * 只动句末的「。」（连同其后的空白），问号、叹号、英文点号、省略号一律不碰；
+ * 整条只有标点的不处理（免得把「。」自己清成空串）。
+ */
+export function stripTrailingPeriod(text: string): string {
+  const body = String(text ?? '')
+  if (body.trim() === '') return body
+  return body.replace(/。\s*$/u, '')
+}
+
 export function splitIntoBubbles(text: string, maxBubbles = 4, sentenceCut = 35): string[] {
   const raw = String(text ?? '')
   if (raw.trim() === '') return []
   const punctOnlyRe = /^[\p{P}\p{S}\s]+$/u
   // 1. 换行初切
   const rawParts = raw.split(/\r?\n+/).map((s) => s.trim()).filter(Boolean)
+  // 2026-11-20：编号列表（「1. …」「2、…」）本身就是一条一条的，**一行一条**，
+  // 行内不再按句号拆，也不许被末尾的 4 条上限合并掉——主人抓到过「2、3 点被并
+  // 成一条」。列表时把上限抬到列表项数量（封顶 8）。
+  const itemRe = /^\s*\d+\s*[.、)．]/
+  // 编号可能独占一行，也可能挤在一段里（「…。2. 自省复盘…3. 记忆图衰减…」），
+  // 两种都算列表，上限按编号个数放宽。
+  const inlineItemRe = /(?:^|\s)\d{1,2}\s*[.、)．]\s/g
+  const listCount = Math.max(
+    rawParts.filter((s) => itemRe.test(s)).length,
+    (raw.match(inlineItemRe) ?? []).length,
+  )
   const merged: string[] = []
   const shortMerge = (last: string, s: string): boolean =>
     punctOnlyRe.test(s)
     || ([...last].length < 6 && [...last].length + [...s].length <= 24)
   for (const part of rawParts) {
-    // 2. 行内断句
-    const pieces = [...part].length <= sentenceCut
+    const isItem = listCount >= 2 && itemRe.test(part)
+    // 2. 行内断句（列表项整行成一条）
+    const pieces = isItem || [...part].length <= sentenceCut
       ? [part]
       : (() => {
-        const segs = part.split(/(?<=[。！？!?…~])\s*/).map((s) => s.trim()).filter(Boolean)
+        // `~` 只在后面不是「路径/数字/英文」时才算句末：
+        //  - `420~2200` 是范围（2026-11-20 主人抓过一次）
+        //  - `~/.dsh/memory-daily/` 是家目录路径（2026-11-20 第二次抓到，
+        //    正文被从路径中间切成两条气泡），后面跟 / \ . _ - 或字母数字都不算句末。
+        // 行内还可能挤着「…。2. 自省复盘…3. 记忆图衰减…」这种编号（主人抓到过
+        // 「2、3 点没分条」），编号标记前也切一刀：`\s\d{1,2}[.、)．]\s`。
+        const segs = part.split(/(?<=[。！？!?…])\s*|(?<=~)\s*(?![0-9A-Za-z/\\._-])|(?<=\s)(?=\d{1,2}\s*[.、)．]\s)/)
+          .map((s) => s.trim()).filter(Boolean)
         return segs.length > 0 ? segs : [part]
       })()
     // 3. 行内吸附合并（换行是硬边界，不跨行合并普通句子）
@@ -260,22 +290,34 @@ export function splitIntoBubbles(text: string, maxBubbles = 4, sentenceCut = 35)
     merged.push(...line)
   }
   if (merged.length === 0) return []
-  // 4. 上限控制
-  const limit = Math.max(1, maxBubbles)
-  if (merged.length > limit) {
-    return [...merged.slice(0, limit - 1), merged.slice(limit - 1).join(' ')]
-  }
-  return merged
+  // 4. 上限控制（有编号列表时按列表项放宽，最多 8 条）
+  const limit = Math.max(1, listCount >= 2 ? Math.min(8, Math.max(maxBubbles, listCount)) : maxBubbles)
+  const out = merged.length > limit
+    ? [...merged.slice(0, limit - 1), merged.slice(limit - 1).join(' ')]
+    : merged
+  // 2026-11-22 主人要求：每条气泡末尾的「。」剥掉（问号叹号不动）；剥成空的丢掉。
+  return out.map(stripTrailingPeriod).filter((s) => s.trim() !== '')
 }
 
+/** 气泡停顿：按字数算的基准参数（2026-11-20 主人要求「按每条字数来，别固定 1500ms」）。 */
+export const BUBBLE_GAP_BASE_MS = 380
+export const BUBBLE_GAP_PER_CHAR_MS = 68
+export const BUBBLE_GAP_MIN_MS = 420
+export const BUBBLE_GAP_MAX_MS = 2200
+
 /**
- * 相邻气泡之间的拟人打字停顿：800–1500ms 随机（issue #6 的生产参数）。
+ * 相邻气泡之间的拟人停顿：跟着**上一条气泡的字数**走 —— 他读完那句要多久，
+ * 我就隔多久再开口。短句（「嗯」「好」）压到 400ms 上下像急着接话，长句
+ * 自然拖到一秒多；再叠 ±15% 抖动，避免每次一模一样。
  * 首条不等待，所以这里只被第 2 条及以后调用。
  */
-export function bubbleGapMs(random: () => number = Math.random): number {
+export function bubbleGapMs(prevText = '', random: () => number = Math.random): number {
+  const chars = [...String(prevText ?? '')].length
+  const base = BUBBLE_GAP_BASE_MS + chars * BUBBLE_GAP_PER_CHAR_MS
   const r = Number(random())
-  const base = Number.isFinite(r) ? Math.min(0.999999, Math.max(0, r)) : 0.5
-  return 800 + Math.floor(base * 700)
+  const jitter = Number.isFinite(r) ? Math.min(0.999999, Math.max(0, r)) : 0.5
+  const raw = Math.round(base * (0.85 + jitter * 0.3))
+  return Math.min(BUBBLE_GAP_MAX_MS, Math.max(BUBBLE_GAP_MIN_MS, raw))
 }
 
 /**
@@ -333,6 +375,11 @@ export function isDuplicateTopic(a: string, b: string, threshold = DUPLICATE_TOP
   if (longer === 0 || shorter / longer < 0.5) return false
   return topicSimilarity(a, b) >= threshold
 } 
+
+/** 双发闸已于 2026-11-22 整套删除（主人定：正常聊天不调 qq_send_text，只在开长活时
+ * 先用它吱一声，两边不会再撞）。这里原先的 `dedupeToolEcho`（工具说过话 → 回合末
+ * 正文整条不写）随之删除；下面的相似度工具函数保留，供别处按需复用。 */
+
 
 /** Options for an explicit outbound send (from tools). */
 export interface SendOptions {
@@ -634,7 +681,7 @@ export class OutboundPipeline {
           // 引用只挂在第一条。
           const bubbles = splitIntoBubbles(plain)
           for (let i = 0; i < bubbles.length; i += 1) {
-            if (i > 0) await new Promise((resolve) => setTimeout(resolve, bubbleGapMs()))
+            if (i > 0) await new Promise((resolve) => setTimeout(resolve, bubbleGapMs(bubbles[i - 1])))
             // T2 (PR port): 出站防御第三闸——正文里的 [[at:QQ]] 换成真 at 段
             //（防御开关内；关闭时保持上游的单 text 段）。
             const segments = defense ? splitAtSegments(bubbles[i]) : [{ type: 'text' as const, data: { text: bubbles[i] } }]

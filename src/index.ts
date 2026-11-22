@@ -188,19 +188,6 @@ export interface Config {
   /** T7 (PR port 入站连发合并)：合并窗口毫秒数（最后一条进来后等这么久，
    *  首条起最多 3000ms 封顶）；默认 600。仅在 inboxQueueEnabled 开启时生效。 */
   inboxQueueDelayMs: number
-  /** 群聊旁观 (#58)：总开关，默认关。开启后未通过 @ 门控的群消息进每群
-   *  环形旁听缓冲，规则触发（唤醒词/话题词/问句/机会触发）时开一次回顾
-   *  回合：模型可插话，也可输出 [[不回]] 保持沉默。 */
-  bystanderEnabled: boolean
-  /** 群聊旁观 (#58)：每群旁听缓冲条数上限；默认 50。 */
-  bystanderCapacity: number
-  /** 群聊旁观 (#58)：话题词表，消息文本包含任一词即触发回顾（子串匹配，
-   *  大小写不敏感）；默认 []。 */
-  bystanderTopics: string[]
-  /** 群聊旁观 (#58)：每群两次回顾回合的最小间隔分钟数；默认 45。 */
-  bystanderCooldownMinutes: number
-  /** 群聊旁观 (#58)：每群每日回顾回合上限（本地日期键计数）；默认 20。 */
-  bystanderDailyLimit: number
   dmPolicy: 'open' | 'allowlist' | 'disabled'
   groupPolicy: 'open' | 'allowlist' | 'disabled'
   allowFrom: string[]
@@ -235,11 +222,6 @@ export interface Config {
     quietTo: number
     attemptGapMinutes: number
     burstProb: number
-    followupEnabled: boolean
-    followupMinSec: number
-    followupMaxSec: number
-    followupProb: number
-    followupMaxPerDay: number
   }
   /** Per-chat per-minute sliding-window cap for normal (non-command) messages; 0 disables. */
   rateLimitPerMinute: number
@@ -409,16 +391,6 @@ export const Config: Z<Config> = z.object({
     .description('入站连发合并（T7 PR 移植）：开启后每个会话一条串行链（先到先答，带图慢消息不再插队），同会话紧挨的几条消息并成一条投递（斜杠命令不合并、注入消息不合并直接串行）；全局积压超过 50 条丢弃一条并记警告；已知代价：每条消息延迟约一个合并窗口（默认 600ms）才投递；默认关闭——关闭时不排队不合并，与上游行为逐字节等价'),
   inboxQueueDelayMs: z.number().default(600)
     .description('连发合并窗口（毫秒，T7 PR 移植）：同会话最后一条消息进来后等这么久再合并投递，从首条算起最多 3000ms 封顶；仅在 inboxQueueEnabled 开启时生效；0=立即投递（等同关闭合并，串行链仍生效）'),
-  bystanderEnabled: z.boolean().default(false)
-    .description('群聊旁观：开启后未被 @ 的群消息进每群旁听缓冲，命中触发条件（提到唤醒词/话题词/明显提问/群内持续活跃）时开一次「回顾回合」，机器人可插话也可沉默（[[不回]]）；默认关'),
-  bystanderCapacity: z.number().default(50)
-    .description('群聊旁观：每群旁听缓冲条数上限（超出淘汰最旧）；默认 50'),
-  bystanderTopics: z.array(z.string()).default([])
-    .description('群聊旁观：话题词表，消息包含任一词即触发回顾（子串匹配，大小写不敏感）；默认空'),
-  bystanderCooldownMinutes: z.number().default(45)
-    .description('群聊旁观：每群两次回顾回合的最小间隔（分钟）；默认 45，防刷屏'),
-  bystanderDailyLimit: z.number().default(20)
-    .description('群聊旁观：每群每日回顾回合上限（按本地日期重置）；默认 20，防刷屏'),
   dmPolicy: z.union([z.const('open'), z.const('allowlist'), z.const('disabled')]).default('open')
     .description('私聊策略：open=仅管理员；allowlist=仅 allowFrom；disabled=拒绝所有私聊'),
   groupPolicy: z.union([z.const('open'), z.const('allowlist'), z.const('disabled')]).default('open')
@@ -489,16 +461,6 @@ export const Config: Z<Config> = z.object({
       .description('模型判定「没话头」或生成失败后，至少隔这么久再试一次（分钟）'),
     burstProb: z.number().min(0).max(1).default(0.5)
       .description('开口时拆成 2~3 条连着发的概率（0–1）'),
-    followupEnabled: z.boolean().default(true)
-      .description('聊完补话：主人刚说完、你也回完了，隔一会儿再判断一次要不要补一句'),
-    followupMinSec: z.number().min(0).default(45)
-      .description('聊完补话的窗口起点（秒）'),
-    followupMaxSec: z.number().min(0).default(180)
-      .description('聊完补话的窗口终点（秒）'),
-    followupProb: z.number().min(0).max(1).default(0.3)
-      .description('补话窗口内掷骰通过的概率（0–1）'),
-    followupMaxPerDay: z.number().min(0).default(3)
-      .description('每天最多补话几次'),
   }).default({})
     .description('主动搭话（合并自 startup/qq-alive.mjs，2026-11-19）：机器人自己判断要不要主动找主人说话'),
   rateLimitPerMinute: z.number().default(30)
@@ -820,6 +782,18 @@ export function apply(ctx: Context, config: Config): void {
     dshHome: dshHome(),
     media,
     transcriber,
+    // 2026-11-20 本地加：图片落盘即收进「未审核」（原来靠 5 分钟定时器扫目录，
+    // 主人要求零延迟）。开关 stickerAutoCollect 关掉就不给这个钩子。
+    stickerCollect: config.stickerAutoCollect === false
+      ? undefined
+      : (path: string) => {
+        try {
+          const result = stickerStoreOf().addFile(path, { approved: false })
+          if (result.added) log('info', '[stickers] 收到图片，已进未审核: ' + result.item.file)
+        } catch (error) {
+          log('warn', '[stickers] 即时收集失败: ' + describeError(error))
+        }
+      },
     agents: ctx.agents,
     sessions: ctx.sessions,
     agentPresets: ctx.agentPresets,
@@ -859,11 +833,6 @@ export function apply(ctx: Context, config: Config): void {
       // 侧缺省兜底：开关默认关、窗口默认 600ms）。
       inboxQueueEnabled: config.inboxQueueEnabled,
       inboxQueueDelayMs: config.inboxQueueDelayMs,
-      bystanderEnabled: config.bystanderEnabled,
-      bystanderCapacity: config.bystanderCapacity,
-      bystanderTopics: config.bystanderTopics,
-      bystanderCooldownMinutes: config.bystanderCooldownMinutes,
-      bystanderDailyLimit: config.bystanderDailyLimit,
       interimMessages: config.interimMessages,
       interimRecallMs: config.interimRecallMs,
       interimRecall: config.interimRecall,
@@ -964,7 +933,7 @@ export function apply(ctx: Context, config: Config): void {
       generateText: proactiveGenerateText,
     })
   }
-  /** 表情包自动收集的定时器（开关关掉时不建）。 */
+  /** 表情包自动收集的定时器（2026-11-20 已去掉——改成收到图立刻入库）。 */
   let stickerTimer: ReturnType<typeof setInterval> | undefined
 
   // Lifecycle: start the bridge and transport; unwind everything on unload.
@@ -1004,20 +973,16 @@ export function apply(ctx: Context, config: Config): void {
     // 等连接就绪后再调 —— 漏了这一步实例就是个死对象：noteInbound 因为 chatIds
     // 还是空的直接 return（连 lastUserAt 都不写），定时器也从不排。
     proactive?.start()
-    // 表情包自动收集（2026-11-19 本地加）：每 5 分钟扫一次入站媒体目录，新图只进
-    // 「未审核」；不调模型、不占显存。关掉开关就连定时器都不建。
+    // 表情包自动收集（2026-11-19 本地加 / 2026-11-20 改成零延迟）：新图在入站
+    // 落盘那一刻就由 inbound 的 collectSticker 收进「未审核」，这里不再排定时器。
+    // 只留启动时扫一遍——把停机期间漏掉的、或手动丢进媒体目录的旧图补进来。
     if (config.stickerAutoCollect !== false) {
-      const collectOnce = (): void => {
-        try {
-          const result = stickerStoreOf().collect(mediaDir)
-          if (result.added > 0) log('info', '[stickers] 自动收集 ' + result.added + ' 张进未审核')
-        } catch (error) {
-          log('warn', '[stickers] 自动收集失败: ' + describeError(error))
-        }
+      try {
+        const result = stickerStoreOf().collect(mediaDir)
+        if (result.added > 0) log('info', '[stickers] 启动补扫 ' + result.added + ' 张进未审核')
+      } catch (error) {
+        log('warn', '[stickers] 启动补扫失败: ' + describeError(error))
       }
-      collectOnce()
-      stickerTimer = setInterval(collectOnce, 300_000)
-      stickerTimer.unref?.()
     }
     // QQ 平台说明与 qq_* 工具现按会话 agent 注入（见 ChatBridge.installChannelScope）
     return async () => {

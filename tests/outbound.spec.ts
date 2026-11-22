@@ -80,7 +80,8 @@ describe('outbound pipeline', () => {
       .map(s => s.data.text ?? '')
       .join('')
     await vi.waitFor(() => {
-      expect(joinedText()).toBe(longText)
+      // 2026-11-22：气泡末尾的「。」会被剥掉，所以按剥过的文本比。
+      expect(joinedText()).toBe(longText.replace(/。/g, ''))
     }, { timeout: 15_000 })
     expect(h.outbound.some(f => JSON.stringify(f.params).includes('base64://'))).toBe(false)
     h.client.close()

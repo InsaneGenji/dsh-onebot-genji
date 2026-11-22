@@ -76,12 +76,25 @@ export declare function splitAtSegments(text: string): OutboundSegment[];
  * 5. 单轮最多 4 条，多出来的并到最后一条（防刷屏）。
  * 发送侧的呼吸停顿在 sendToChat 里做（首条立即，其后 800–1500ms 随机）。
  */
-export declare function splitIntoBubbles(text: string, maxBubbles?: number, sentenceCut?: number): string[];
 /**
- * 相邻气泡之间的拟人打字停顿：800–1500ms 随机（issue #6 的生产参数）。
+ * 剥掉一条气泡末尾的中文句号（2026-11-22 主人要求：聊天里句末别挂「。」）。
+ * 只动句末的「。」（连同其后的空白），问号、叹号、英文点号、省略号一律不碰；
+ * 整条只有标点的不处理（免得把「。」自己清成空串）。
+ */
+export declare function stripTrailingPeriod(text: string): string;
+export declare function splitIntoBubbles(text: string, maxBubbles?: number, sentenceCut?: number): string[];
+/** 气泡停顿：按字数算的基准参数（2026-11-20 主人要求「按每条字数来，别固定 1500ms」）。 */
+export declare const BUBBLE_GAP_BASE_MS = 380;
+export declare const BUBBLE_GAP_PER_CHAR_MS = 68;
+export declare const BUBBLE_GAP_MIN_MS = 420;
+export declare const BUBBLE_GAP_MAX_MS = 2200;
+/**
+ * 相邻气泡之间的拟人停顿：跟着**上一条气泡的字数**走 —— 他读完那句要多久，
+ * 我就隔多久再开口。短句（「嗯」「好」）压到 400ms 上下像急着接话，长句
+ * 自然拖到一秒多；再叠 ±15% 抖动，避免每次一模一样。
  * 首条不等待，所以这里只被第 2 条及以后调用。
  */
-export declare function bubbleGapMs(random?: () => number): number;
+export declare function bubbleGapMs(prevText?: string, random?: () => number): number;
 /**
  * 双发闸（语义版，2026-11-19 主人要回）：判断「回合末正文」是不是把工具
  * （qq_send_text / 图片配文那种）刚说过的话又重复了一遍。纯文本启发式，
@@ -96,6 +109,9 @@ export declare function topicSimilarity(a: string, b: string): number;
 export declare const DUPLICATE_TOPIC_THRESHOLD = 0.72;
 /** 语义判重：归一化后同串直接算重复，否则二元组 Dice ≥ 阈值算重复。 */
 export declare function isDuplicateTopic(a: string, b: string, threshold?: number): boolean;
+/** 双发闸已于 2026-11-22 整套删除（主人定：正常聊天不调 qq_send_text，只在开长活时
+ * 先用它吱一声，两边不会再撞）。这里原先的 `dedupeToolEcho`（工具说过话 → 回合末
+ * 正文整条不写）随之删除；下面的相似度工具函数保留，供别处按需复用。 */
 /** Options for an explicit outbound send (from tools). */
 export interface SendOptions {
     replyTo?: string;

@@ -340,10 +340,11 @@ describe('qq_* member-tier tool gate (权限分档 A2)', () => {
 
 /**
  * memberTools='send' 中间档（#59）：成员回合只放行「往当前会话发内容」的
- * 三个工具（qq_send_text / qq_send_segments / qq_send_image），让机器人对
- * 成员也能分条、发图（工作区图库）；qq_send_forward（合并转发卡片可伪造
- * 显示名/内容）、qq_send_file / qq_send_voice / qq_send_video（携带任意
- * 本地文件出站）、qq_napcat_api、qq_group_history 仍仅管理员回合可用。
+ * 工具（qq_send_text / qq_send_image / qq_send_voice，后者 2026-11-20 加），
+ * 让机器人对成员也能分条、发图（工作区图库）、发语音；媒体路径仍受
+ * mediaSendRoots 围栏约束。qq_send_forward（合并转发卡片可伪造显示名/内容）、
+ * qq_send_file / qq_send_video（携带任意本地文件出站）、qq_napcat_api、
+ * qq_group_history 仍仅管理员回合可用。
  */
 describe('qq_send_* memberTools=send 中间档 (#59)', () => {
   it('allows the three send tools on a member turn', async () => {
@@ -360,6 +361,12 @@ describe('qq_send_* memberTools=send 中间档 (#59)', () => {
     expect(img.sent).toBe(true)
     const imgSend = [...h.calls].reverse().find(c => c.action === 'send_msg')!
     expect((imgSend.params.message as Array<Record<string, unknown>>)[0]).toMatchObject({ type: 'image', data: { url: 'https://example.com/pic.jpg' } })
+    // qq_send_voice：越过档位门后碰到媒体围栏/文件检查（给一个不存在的
+    // 路径），错误里不该再出现「成员档位」字样。
+    const voiceErr = await h.tool('qq_send_voice').execute({ path: 'D:/nope/voice.wav' }, h.exec(sessionId))
+      .then(() => '', (e: Error) => e.message)
+    expect(voiceErr).not.toContain('成员档位')
+    expect(voiceErr).toContain('媒体目录')
   })
 
   it('still rejects admin-only tools with the send-tier message, before any validation', async () => {
@@ -369,7 +376,6 @@ describe('qq_send_* memberTools=send 中间档 (#59)', () => {
     for (const [name, args] of [
       ['qq_send_forward', { messages: [{ name: 'a', content: 'b' }] }],
       ['qq_send_file', { path: '/etc/passwd' }],
-      ['qq_send_voice', { path: '/etc/passwd' }],
       ['qq_send_video', { path: '/etc/passwd' }],
       ['qq_napcat_api', { action: 'get_group_member_list', params: { group_id: 1 } }],
       ['qq_group_history', { chat_id: 'group:20002' }],

@@ -60,12 +60,13 @@ export declare function faceToEmoji(id: string): string;
  */
 export declare function detectExplicitMention(segments: OneBotSegment[] | undefined, raw: string, selfId: string, botQQ: string, atAllCounts?: boolean): boolean;
 /**
- * T1 (PR port): 唤醒词命中判定——只认消息开头命中。用 startsWith 而非
- * includes：消息正文里偶然提到唤醒词（如有人在句中写到唤醒词）不再误触；
+ * 唤醒词命中判定。
+ * 2026-11-20 本地改（主人要求恢复）：句中出现即算——「大鱼」「黑鱼」这类
+ * 复合词里的唤醒词也要能叫醒，所以用 includes 而不是 startsWith。
  * 大小写不敏感、两侧空白忽略；空词表恒 false。
  * @param text - 消息纯文本（segmentText 结果）。
  * @param names - 唤醒词表（管理员档或成员档）。
- * @returns 是否以任一唤醒词开头。
+ * @returns 是否包含任一唤醒词。
  */
 export declare function detectWakeName(text: string, names: readonly string[]): boolean;
 /**

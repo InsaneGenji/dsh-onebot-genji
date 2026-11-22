@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 客户端设置页 UI bundle 测试（T8 · 贡献者 0.9.19 版重写；0.10.0 视觉对齐更新）。
  *
  * 验证 src/client.ts（构建产物 lib/client.js，CJS 包裹挂 window.__ModuleLoader__）
@@ -232,7 +232,7 @@ describe('T8 客户端 bundle — descriptor 契约核对（与宿主 src/settin
     expect(parsed.config.reactionOnMention).toBe(false)
     expect(parsed.config.reactionEmoji).toBe(178)
     expect(parsed.config.allowAllUsers).toBe(false) // 面板下架但 schema/codec 仍保留（老配置可读）
-    expect(Object.keys(parsed.config)).toHaveLength(101) // 100 ALL_KEYS 配置键 + notices
+    expect(Object.keys(parsed.config)).toHaveLength(91) // 90 ALL_KEYS 配置键 + notices（旁观 5 键 2026-11-20 已删；补话 5 键 2026-11-22 已删）
     expect(parsed.config.notices).toEqual(SCHEMA_DEFAULTS.notices)
   })
 
@@ -286,8 +286,7 @@ describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已
       'inboxQueueDelayMs', 'interimMessages', 'interimRecall', 'interimRecallMs', 'sendErrorNotice', 'deferredTimeoutMs',
       'proactiveEnabled', 'proactiveTargetUsers', 'proactiveMinIdleMinutes', 'proactiveMinGapMinutes',
       'proactiveMaxPerDay', 'proactiveQuietFrom', 'proactiveQuietTo', 'proactiveAttemptGapMinutes',
-      'proactiveBurstProb', 'proactiveFollowupEnabled', 'proactiveFollowupMinSec',
-      'proactiveFollowupMaxSec', 'proactiveFollowupProb', 'proactiveFollowupMaxPerDay',
+      'proactiveBurstProb',
     ],
     stickers: ['stickerAutoCollect', 'stickerRoot'],
     session: [
@@ -302,12 +301,12 @@ describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已
     diagnostics: ['actionAuditEnabled', 'traceEnabled', 'recordInbound', 'inboxRedact', 'injectEnabled', 'injectDryRun', 'logLevel'],
   }
 
-  it('分组键序逐字对齐面板口径（7 组 82 键，含 T6/T7 转正键、T24 titleSyncEnabled、#61 建议 2 startupResumeEnabled、11.19 掷骰四键/表情包组/主动搭话 14 键）', () => {
+  it('分组键序逐字对齐面板口径（7 组 77 键，含 T6/T7 转正键、T24 titleSyncEnabled、#61 建议 2 startupResumeEnabled、11.19 掷骰四键/表情包组/主动搭话 9 键、11.22 删补话五键）', () => {
     expect(client.GROUP_KEYS).toStrictEqual(PANEL_GROUPS)
     expect(groups.map((group) => group.id)).toEqual(['connection', 'permissions', 'behavior', 'stickers', 'session', 'media', 'diagnostics'])
-    expect(allFields).toHaveLength(82)
+    expect(allFields).toHaveLength(77)
     const clientKeys = allFields.map((field) => field.key)
-    expect(new Set(clientKeys).size).toBe(82) // 无重复
+    expect(new Set(clientKeys).size).toBe(77) // 无重复
     for (const key of clientKeys) expect([...ALL_KEYS]).toContain(key) // 无孤儿键
     // 面板键 ⊂ host SETTINGS_GROUPS（host 侧仍保留下架键，面板只是不再渲染）
     const hostKeys = Object.values(SETTINGS_GROUPS).flat()
@@ -318,7 +317,7 @@ describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已
       expect.arrayContaining([
         'inboxQueueEnabled', 'inboxQueueDelayMs',
         'voiceReplyEnabled', 'voiceReplyProb', 'stickerReplyEnabled', 'stickerReplyProb',
-        'proactiveEnabled', 'proactiveFollowupMaxPerDay',
+        'proactiveEnabled', 'proactiveBurstProb',
       ]),
     )
     // 2026-11-19：表情包组夹在行为与会话之间，只有两个面板键。
@@ -362,24 +361,19 @@ describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已
     expect('reactionEmoji' in defaults).toBe(false)
   })
 
-  it('「旁观」整组退出面板，但 schema/ALL_KEYS/DEFAULTS 的 5 键全保留（老配置还能读）', () => {
+  it('「旁观」2026-11-20 已整套删除（面板分组、schema、ALL_KEYS、DEFAULTS 都不再有）', () => {
     expect(groups.map((group) => group.id)).not.toContain('bystander')
-    expect(allFields.map((field) => field.key)).not.toContain('bystanderEnabled')
     const bystanderKeys = ['bystanderEnabled', 'bystanderCapacity', 'bystanderCooldownMinutes', 'bystanderDailyLimit', 'bystanderTopics']
     for (const key of bystanderKeys) {
-      expect([...ALL_KEYS]).toContain(key)
-      expect(key in defaults).toBe(true)
+      expect(allFields.map((field) => field.key)).not.toContain(key)
+      expect([...ALL_KEYS]).not.toContain(key)
+      expect(key in defaults).toBe(false)
     }
-    expect(defaults.bystanderEnabled).toBe(false)
-    expect(defaults.bystanderCapacity).toBe(50)
-    expect(defaults.bystanderCooldownMinutes).toBe(45)
-    expect(defaults.bystanderDailyLimit).toBe(20)
-    expect(defaults.bystanderTopics).toEqual([])
   })
 
-  it('默认值逐字对齐 host SCHEMA_DEFAULTS（98 键：82 面板键 + 下架键 + 旁观 5 键 + chatIdleEvictDays；notices 走面板 5 真键不在 DEFAULTS）', () => {
+  it('默认值逐字对齐 host SCHEMA_DEFAULTS（88 键：77 面板键 + 下架键 + chatIdleEvictDays；notices 走面板 5 真键不在 DEFAULTS）', () => {
     const hostDefaults = SCHEMA_DEFAULTS as Record<string, unknown>
-    expect(Object.keys(defaults)).toHaveLength(98) // 含下架键、旁观 5 键与 chatIdleEvictDays
+    expect(Object.keys(defaults)).toHaveLength(88) // 含下架键与 chatIdleEvictDays（旁观 5 键 2026-11-20 已删；补话 5 键 2026-11-22 已删）
     expect('notices' in defaults).toBe(false) // notices 由 NOTICE_KEYS 面板通道承载
     expect(defaults.chatIdleEvictDays).toBe(hostDefaults.chatIdleEvictDays) // 不上面板但参与徽标对照
     expect(defaults.sidebarEntryEnabled).toBe(true) // T11：侧边栏入口默认开（设置项已下架，行为恒开）
@@ -470,14 +464,14 @@ describe('T8 notices 面板 — 5 真键（本仓 schema 无贡献者 newSession
       config: Record<string, unknown>,
       opts?: { secretDraft?: string; clearSecret?: boolean },
     ) => { patch: Record<string, unknown>; invalidKeys: string[] }
-    const queueDef = '⏳ 当前任务运行中，新消息已排队，将在当前任务结束后依次处理。'
+    const queueDef = '⏳ 当前任务运行中，新消息已排队，将在当前任务结束后依次处理'
     const values = baseDraft()
     values['notices.queue'] = { on: true, text: '自定义排队文案' }
     const custom = compute(values, SNAPSHOT_CONFIG)
     // notices 增量合并进 patch.notices：未动键按 draftToNotice 归一为 true（= 默认文案），动的键下发自定义 string
     expect(custom.patch.notices).toEqual({ steerAccepted: true, queue: '自定义排队文案', answerAccepted: true, deferredTimeout: true, rateLimited: true })
     const values2 = baseDraft()
-    values2['notices.steerAccepted'] = { on: true, text: '✅ 已作为补充指令提交给当前任务，模型将在下一步读取。' } // == 默认文案 → true == 当前生效值 → 无差异，notices 不进 patch
+    values2['notices.steerAccepted'] = { on: true, text: '✅ 已作为补充指令提交给当前任务，模型将在下一步读取' } // == 默认文案 → true == 当前生效值 → 无差异，notices 不进 patch
     expect(compute(values2, SNAPSHOT_CONFIG).patch.notices).toBeUndefined()
     const values3 = baseDraft()
     values3['notices.answerAccepted'] = { on: false, text: '' }
@@ -540,28 +534,34 @@ describe('T8 showIf 条件显隐 — 贡献者面板交互契约', () => {
     expect(visibleLabels('session', { memoryFilesEnabled: true })).toContain('记忆文件路径')
   })
 
-  it('渲染行计数与 showIf 自洽：默认草稿顶层字段行 82 行 = 可见 67 键 + 15 通知行（5 开关 + 5 文案 + 5 主动搭话 followup）；隐藏 15 键', () => {
+  it('渲染行计数与 showIf 自洽：默认草稿顶层字段行 77 行 = 可见 62 键 + 15 通知行（5 开关 + 5 文案 + 5 主动搭话 followup）；隐藏 11 键', () => {
     const visible = (field: { showIf?: { key: string; value: unknown } }) => !field.showIf || baseDraft()[field.showIf.key] === field.showIf.value
     const hiddenKeys = allFields.filter((field) => !visible(field)).map((field) => field.key)
-    expect(allFields.filter(visible)).toHaveLength(67)
+    expect(allFields.filter(visible)).toHaveLength(66)
     expect(hiddenKeys).toEqual([
       'host', 'port', 'allowFrom', 'groupAllowFrom', 'inboxQueueDelayMs', 'interimRecallMs',
-      'proactiveFollowupMinSec', 'proactiveFollowupMaxSec', 'proactiveFollowupProb', 'proactiveFollowupMaxPerDay',
       'memoryFiles', 'sttCommand', 'sttArgs', 'sttModel', 'textImageThreshold',
     ])
     const rowsPerGroup = groups.map((group) => topFieldRows(renderGroup(group.id, {})).length)
-    // connection 4（6-2 隐藏）/ permissions 10（12-2 隐藏）/ behavior 37（18 可见字段 + 4 通知段字段
-    // + 10 通知行 + 4 主动搭话 followup 由 fold 展开后计入）/ stickers 2 / session 8（9-1 隐藏）
+    // connection 4（6-2 隐藏）/ permissions 10（12-2 隐藏）/ behavior 32（13 可见字段 + 4 通知段字段
+    // + 10 通知行 + 5 主动搭话多行文案由 fold 展开后计入；2026-11-22 删补话四行 37→32）/ stickers 2 / session 8（9-1 隐藏）
     // media 13（17-4 隐藏）/ diagnostics 7（旁观组已整组下架，不再计行）
-    expect(rowsPerGroup).toEqual([4, 10, 37, 2, 8, 13, 7])
-    expect(rowsPerGroup.reduce((sum, count) => sum + count, 0)).toBe(81)
+    expect(rowsPerGroup).toEqual([4, 10, 32, 2, 8, 13, 7])
+    expect(rowsPerGroup.reduce((sum, count) => sum + count, 0)).toBe(76)
   })
 
-  it('2026-11-18 行位调整：deferredTimeoutMs 紧跟「超时补发提示」文案行；sendErrorNotice 落整组最后', () => {
+  it('2026-11-22 行位调整：deferredTimeoutMs 紧跟「超时补发提示」文案行；sendErrorNotice 夹在「限流提示」和「私聊」之间', () => {
     const rows = topFieldRows(renderGroup('behavior', {}))
     const labelOf = (row: StubElement) => walk(row).filter((element) => element.props.className === 'obx-label').map((element) => String(element.children[0])).join('|')
     const labels = rows.map(labelOf)
-    expect(labels[labels.length - 1]).toBe('发送错误通知')
+    // 2026-11-22 主人要求：发送错误通知从整组最末尾挪到「限流提示」（通知段最后一项）之后、
+    // 「私聊」分区第一项（主动搭话）之前。
+    const errorRow = labels.indexOf('发送错误通知')
+    const rateRow = labels.indexOf('限流提示')
+    const proactiveRow = labels.indexOf('主动搭话')
+    expect(rateRow).toBeGreaterThan(-1)
+    expect(errorRow).toBeGreaterThan(rateRow)
+    expect(proactiveRow).toBeGreaterThan(errorRow)
     const timeoutNoticeRow = labels.indexOf('超时补发提示')
     expect(timeoutNoticeRow).toBeGreaterThan(-1)
     expect(labels[timeoutNoticeRow + 2]).toBe('等待模型回复超时（毫秒）') // 开关行 → 文案行 → 超时字段行
@@ -570,21 +570,24 @@ describe('T8 showIf 条件显隐 — 贡献者面板交互契约', () => {
     offDraft['notices.deferredTimeout'] = { on: false, text: '⏳ 等待模型回复超时（已静默等待约 X 秒），任务仍在后台运行；完成后将自动补发最终结果。如需停止请发送 /stop。' }
     const offLabels = topFieldRows(renderGroup('behavior', { draft: offDraft })).map(labelOf)
     expect(offLabels).toContain('等待模型回复超时（毫秒）')
-    expect(offLabels[offLabels.length - 1]).toBe('发送错误通知')
+    // 通知段整体关掉时 sendErrorNotice 仍跟着 @notices 走，位置不变。
+    const offErrorRow = offLabels.indexOf('发送错误通知')
+    expect(offErrorRow).toBeGreaterThan(offLabels.indexOf('限流提示'))
+    expect(offLabels.indexOf('主动搭话')).toBeGreaterThan(offErrorRow)
   })
 })
 
 describe('T8 客户端 bundle — 渲染函数模块级可测（renderGroup 纯函数，ui 桩注入）', () => {
-  it('七组各产出标题与逐字段控件行；控件类型齐备（9 分段 + 11 多行文本 + 31 开关 + 29 文本输入 + 1 密码框 + 1 清除勾选）', () => {
+  it('七组各产出标题与逐字段控件行；控件类型齐备（9 分段 + 11 多行文本 + 30 开关 + 25 文本输入 + 1 密码框 + 1 清除勾选）', () => {
     const sections = groups.map((group) => renderGroup(group.id, {}))
     expect(sections.map((section) => section.props['data-group'])).toEqual(['connection', 'permissions', 'behavior', 'stickers', 'session', 'media', 'diagnostics'])
     const elements = sections.flatMap((section) => walk(section))
     expect(elements.filter((element) => element.type === stubUi.SegmentedControl)).toHaveLength(9) // 9 枚举全显（原生分段控件；faceStyle 已下架）
     expect(elements.filter((element) => element.type === 'textarea')).toHaveLength(11) // 4 可见 stringArray（含 proactiveTargetUsers）+ 5 通知文案 + 2 主动搭话多行文案
     const inputs = elements.filter((element) => element.type === stubUi.Input)
-    expect(inputs.filter((input) => input.props.type === 'text')).toHaveLength(29) // 22 可见 number + 7 可见 string（forward 档 url 显、host/port 隐）
+    expect(inputs.filter((input) => input.props.type === 'text')).toHaveLength(25) // 18 可见 number + 7 可见 string（forward 档 url 显、host/port 隐；2026-11-22 删补话四行 29→25）
     expect(inputs.filter((input) => input.props.type === 'password')).toHaveLength(1)
-    expect(elements.filter((element) => element.type === stubUi.Switch)).toHaveLength(31) // 26 布尔面板键 + 5 通知开关（恒显）
+    expect(elements.filter((element) => element.type === stubUi.Switch)).toHaveLength(30) // 25 布尔面板键 + 5 通知开关（恒显；2026-11-22 删 proactiveFollowupEnabled 31→30）
     expect(elements.filter((element) => element.type === stubUi.Checkbox)).toHaveLength(1) // 仅 secret 清除勾选
     expect(elements.filter((element) => element.type === 'input')).toHaveLength(0) // 控件全走 ui 桩；原始 input 不再出现
   })
@@ -780,10 +783,7 @@ describe('T8 数字行内校验 — NUMBER_RANGE 对齐 host + numberRangeInvali
       maxVoiceBytes: [1, 52428800],
       inboundImageMaxPx: [0, undefined],
       inboundFileMaxBytes: [0, undefined],
-      bystanderCapacity: [5, 500],
-      bystanderCooldownMinutes: [5, 1440],
       groupContextLines: [0, 200],
-      bystanderDailyLimit: [1, 200],
       proactiveMinIdleMinutes: [0, 1440],
       proactiveMinGapMinutes: [0, 1440],
       proactiveMaxPerDay: [1, 48],
@@ -791,18 +791,12 @@ describe('T8 数字行内校验 — NUMBER_RANGE 对齐 host + numberRangeInvali
       proactiveQuietTo: [0, 23],
       proactiveAttemptGapMinutes: [0, 1440],
       proactiveBurstProb: [0, 1],
-      proactiveFollowupMinSec: [0, 3600],
-      proactiveFollowupMaxSec: [0, 3600],
-      proactiveFollowupProb: [0, 1],
-      proactiveFollowupMaxPerDay: [0, 48],
     })
-    // 键集 = 面板 25 个 number 字段 + 「旁观」整组下架后仍留在表里的 3 个数字键
-    // （reactionEmoji/chatIdleEvictDays 不上面板也不入表）
+    // 键集 = 面板 21 个 number 字段（2026-11-20：「旁观」整组连同 3 个数字键一起删了，
+    // 2026-11-22：补话四键删了 25→21；reactionEmoji/chatIdleEvictDays 不上面板也不入表）
     const panelNumberKeys = allFields.filter((field) => field.type === 'number').map((field) => field.key)
-    expect(panelNumberKeys).toHaveLength(25)
-    expect([...Object.keys(NUMBER_RANGE)].sort()).toEqual(
-      [...panelNumberKeys, 'bystanderCapacity', 'bystanderCooldownMinutes', 'bystanderDailyLimit'].sort(),
-    )
+    expect(panelNumberKeys).toHaveLength(21)
+    expect([...Object.keys(NUMBER_RANGE)].sort()).toEqual([...panelNumberKeys].sort())
     expect(CLIENT_SOURCE).toContain('src/settings-remote.ts')
   })
 
@@ -881,7 +875,7 @@ describe('T8 冲突合并 — mergeOnConflict（远端未变保留草稿、远�
     expect(merged.keptCount).toBe(1)
     expect(merged.draft.port).toBe('3000')
     expect(merged.draft.botQQ).toBe('10086')
-    expect(Object.keys(merged.draft)).toHaveLength(82)
+    expect(Object.keys(merged.draft)).toHaveLength(77)
     expect((client.computeDirtyKeys as Function)(merged.draft, next)).toEqual(['botQQ'])
   })
 

@@ -284,19 +284,18 @@ describe('T7 设置键：inboxQueueEnabled/inboxQueueDelayMs', () => {
     expect(() => validatePatch({ inboxQueueEnabled: 'yes' })).toThrow()
   })
 
-  it('behavior 组键序：deferredTimeoutMs 之后追加两键（0.10.0 重排后组尾再续 ignoreSelf/sidebarEntryEnabled；11.19 掷骰四键紧跟 rateLimitPerMinute、14 键 proactive 在组尾）', () => {
+  it('behavior 组键序：deferredTimeoutMs 之后追加两键（0.10.0 重排后组尾再续 ignoreSelf/sidebarEntryEnabled；11.19 掷骰四键紧跟 rateLimitPerMinute、9 键 proactive 在组尾（2026-11-22 删补话五键））', () => {
     // 2026-11-19：回合形式掷骰的四个键紧跟在 rateLimitPerMinute 后面。
     expect(SETTINGS_GROUPS.behavior.slice(5, 10)).toEqual([
       'rateLimitPerMinute', 'voiceReplyEnabled', 'voiceReplyProb', 'stickerReplyEnabled', 'stickerReplyProb',
     ])
-    // 主动搭话 14 个扁平 proactiveXxx 落在组尾。
-    expect(SETTINGS_GROUPS.behavior.slice(-14)).toEqual([
+    // 主动搭话 9 个扁平 proactiveXxx 落在组尾。
+    expect(SETTINGS_GROUPS.behavior.slice(-9)).toEqual([
       'proactiveEnabled', 'proactiveTargetUsers', 'proactiveMinIdleMinutes', 'proactiveMinGapMinutes',
       'proactiveMaxPerDay', 'proactiveQuietFrom', 'proactiveQuietTo', 'proactiveAttemptGapMinutes',
-      'proactiveBurstProb', 'proactiveFollowupEnabled', 'proactiveFollowupMinSec',
-      'proactiveFollowupMaxSec', 'proactiveFollowupProb', 'proactiveFollowupMaxPerDay',
+      'proactiveBurstProb',
     ])
-    expect(SETTINGS_GROUPS.behavior.slice(-19, -14)).toEqual(['inboxQueueEnabled', 'inboxQueueDelayMs', 'titleSyncEnabled', 'ignoreSelf', 'sidebarEntryEnabled'])
-    expect(SETTINGS_GROUPS.behavior.slice(-21, -19)).toEqual(['autoSteerPolicy', 'deferredTimeoutMs'])
+    expect(SETTINGS_GROUPS.behavior.slice(-14, -9)).toEqual(['inboxQueueEnabled', 'inboxQueueDelayMs', 'titleSyncEnabled', 'ignoreSelf', 'sidebarEntryEnabled'])
+    expect(SETTINGS_GROUPS.behavior.slice(-16, -14)).toEqual(['autoSteerPolicy', 'deferredTimeoutMs'])
   })
 })

@@ -142,13 +142,15 @@ function toolTier(bridge: ChatBridge, exec: ToolRunContext | undefined): 'none' 
 }
 
 /**
- * memberTools='send' 档放行的工具白名单（#59）：只放行「往当前会话发内容」
- * 的工具，让成员回合也能分条、发图（含会话工作区图库）。qq_send_forward
- * （合并转发可借机器人发出显示名/内容均可自定的卡片，有伪造聊天记录风险）、
- * qq_send_file / qq_send_voice / qq_send_video（携带任意本地文件出站）、
+ * memberTools='send' 档放行的工具白名单（#59；2026-11-20 主人要求加
+ * qq_send_voice）：只放行「往当前会话发内容」的工具，让成员回合也能分条、
+ * 发图（含会话工作区图库）、发语音（点歌/念白这类本地音频出站）。媒体路径
+ * 仍受 mediaSendRoots 围栏约束，成员档位拿不到 admin 档的额外根目录。
+ * qq_send_forward（合并转发可借机器人发出显示名/内容均可自定的卡片，有伪造
+ * 聊天记录风险）、qq_send_file / qq_send_video（携带任意本地文件出站）、
  * qq_napcat_api、qq_group_history 仍仅管理员回合可用。
  */
-const SEND_TIER_TOOLS = new Set(['qq_send_text', 'qq_send_image'])
+const SEND_TIER_TOOLS = new Set(['qq_send_text', 'qq_send_image', 'qq_send_voice'])
 
 /**
  * Register all qq_* tools on the context. Registration is effect-based: the
@@ -178,7 +180,7 @@ export function registerTools(
           return execute(args, exec)
         }
         throw new Error(tier === 'send'
-          ? `当前发言人为成员档位（memberTools=send）：${tool.name} 不在放行清单（仅 qq_send_text / qq_send_image），其余 qq_* 工具仅管理员回合可用`
+          ? `当前发言人为成员档位（memberTools=send）：${tool.name} 不在放行清单（仅 qq_send_text / qq_send_image / qq_send_voice），其余 qq_* 工具仅管理员回合可用`
           : '当前发言人为成员档位，无工具权限：qq_* 工具仅管理员回合可用')
       },
     }
@@ -339,12 +341,13 @@ export function registerTools(
   }))
 
   // T2 (PR port): qq_send_text —— 一条独立文字消息，可用 reply_to 精确引用。
-  // 场景：对方一次连发多张图/多条消息时，一张一句地回，每句引住对应那条
-  //（mid 来自入站 <user_message mid="…">）。清洗走与主路径共用的
+  // 2026-11-22 主人最终口径（全走工具那条回退了）：正常聊天**别用**，写正文；
+  // 只有要开长活时（画图、点歌/唱歌、改程序跑测试，要等几十秒以上）才先用它吱一声。
+  // reply_to 的 mid 来自入站 <user_message mid="…">。清洗走与主路径共用的
   // cleanOutboundText；[[reply:<mid>]] / [[at:QQ]] 标记由 sendToChat 统一处理。
   register(defineTool({
     name: 'qq_send_text',
-    description: '向 QQ 会话发送一条独立的文字消息，可选地引用某条消息（reply_to=那条消息的 messageId）。对方一次连发多条时用它一条一条答。',
+    description: '发一条文字消息。**正常聊天不要用这个工具，直接把话写在回复正文里**（正文会自动分气泡）。只有要开长活（画图、点歌/唱歌、改程序跑测试这类要等几十秒以上的）才先用它吱一声「等着，这就去」；要引用某条消息就传 reply_to。',
     parameters: {
       text: { type: 'string', required: true, description: '要发送的文字' },
       chat_id: { type: 'string', description: '目标会话，格式 private:<QQ号> 或 group:<群号>；省略时默认当前会话' },
@@ -359,8 +362,6 @@ export function registerTools(
       const chatId = resolveChat(bridge, exec, a.chat_id)
       const replyTo = typeof a.reply_to === 'string' && a.reply_to.trim() !== '' ? a.reply_to.trim() : undefined
       const ids = await bridge.sendToChat(chatId, text, replyTo === undefined ? {} : { replyTo })
-      // 双发闸（语义版，2026-11-19）：把这句记账，回合末正文重复同一句就不发了。
-      bridge.noteToolText?.(chatId, text)
       return { sent: true, messageId: ids.length > 0 ? String(ids[ids.length - 1]) : null }
     },
   }))

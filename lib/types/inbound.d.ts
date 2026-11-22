@@ -127,16 +127,6 @@ export interface InboundContext {
     dispatchFollowup(chatId: ChatId, text: string, role: UserRole, nickname?: string, options?: {
         reactionMessageId?: string;
     }): Promise<void>;
-    /** 群聊旁观 (#58)：未通过 @ 门控的群消息喂进每群旁听缓冲，规则触发时由
-     * 桥开一次回顾回合。桥侧 enabled=false 即返回（挂点零行为）；缺席（旧
-     * 测试桩）= 无旁观能力，drop 点行为与上游逐字节等价。 */
-    feedBystander?(chatId: ChatId, entry: {
-        seq: string;
-        time: number;
-        userId: string;
-        nickname: string;
-        text: string;
-    }): Promise<void>;
     /** 本地加（2026-11-19）：未 @ 的群消息记进「参考上下文条数」环缓冲（不触发
      * 任何回合）。缺席 = 零行为，与上游等价。 */
     recordGroupContext?(chatId: ChatId, entry: {
@@ -145,6 +135,10 @@ export interface InboundContext {
         nickname: string;
         text: string;
     }): void;
+    /** 本地加（2026-11-20）：图片一落盘就立刻收进表情包库「未审核」。
+     * 主人把 5 分钟定时器换成了这里——收到即入库，不再等下一轮扫描。
+     * 缺席（旧测试桩 / 关掉自动收集）= 零行为，与上游等价。 */
+    collectSticker?(path: string): void;
     /** T2 (P1): busy-turn policy seam — invoked for every non-command message
      * after ALL gates (dedup/policy/mention/media/rate-limit), right before the
      * turn dispatch, so queue/steer can never bypass an existing gate. Returns

@@ -12,19 +12,23 @@ export interface ProactiveSettings {
     quietTo: number;
     attemptGapMinutes: number;
     burstProb: number;
-    followupEnabled: boolean;
-    followupMinSec: number;
-    followupMaxSec: number;
-    followupProb: number;
-    followupMaxPerDay: number;
 }
 /** 配置默认值：Config.proactive 用 .default({}) 时不保证补齐子字段，这里垫一层，
  *  免得 undefined 把阈值判断打成恒假、让主动搭话静默失效。与 lib/index.js 的
  *  Config.proactive 逐项对齐（不含接口地址/模型名/Key —— 2026-11-19 起走当前会话模型）。 */
 export declare const PROACTIVE_DEFAULTS: ProactiveSettings;
+/** 现在几点（HH:MM），给搭话当线索用。 */
+export declare function clockOf(date?: Date): string;
+/** 这台机器开机多久了（分钟）。2026-11-21 主人要求：把这事实当线索喂进去——
+ *  早上八点能跑，本身就说明他昨晚关过机、现在又开回来了，不该再问「关了没」。 */
+export declare function uptimeMinutes(): number;
+/** 情境线索：现在是几点、机器刚开机还是已经开了一整天。
+ *  只给事实，不给「该不该问关了没」这种规矩。 */
+export declare function situationLines(now?: Date, bootMin?: number): string[];
 /** 把 NapCat 的 raw_message 里那堆 CQ 码压成中文占位，不然生成时接不上话头。 */
 export declare function cleanCq(text: unknown, masterQQ?: string): string;
-/** 清洗模型输出：去括号旁白、去前缀引号、去句末句号、太长截断。 */
+/** 这行是不是只有占位符（[图片]/[语音]/[CQ:...]），拿不到任何可接的文字。 */
+export declare function isPlaceholderOnly(text: unknown): boolean;
 export declare function cleanText(text: unknown): string;
 /** 真人会手滑：偶尔改一处常用字。概率很低，别每次都改。 */
 export declare function humanize(text: string, prob?: number): string;
@@ -39,8 +43,6 @@ export interface ProactiveState {
     day: string;
     countToday: number;
     recentProactive: string[];
-    lastFollowupFor: number;
-    followupToday: number;
 }
 /** 语感库（~/.dsh/style/pool.json）里的一对「主人说 → 我回」。 */
 export interface ProactiveStylePair {
@@ -120,7 +122,6 @@ export declare class ProactiveTalk {
     styleCache: ProactiveStylePool | null;
     timer: ReturnType<typeof setTimeout> | null;
     stopped: boolean;
-    nextTickAt: number;
     ticking: boolean;
     chatId: string;
     /** 多目标（2026-11-19）：配置里可以填多个搭话目标。 */
@@ -152,13 +153,10 @@ export declare class ProactiveTalk {
     /** 最近几条对话（优先用插件自己的上下文尾巴，没有就用状态里记的最后一句）。 */
     recentHistory(count?: number): Promise<string[]>;
     buildPrompt(idleMin: number, history: readonly string[], burst: boolean): string;
-    buildFollowupPrompt(sinceSec: number, history: readonly string[]): string;
     /** 发给所有目标（2026-11-19：目标可以是多个，逐个发，中间隔一下）。 */
     send(text: string): Promise<boolean>;
     decide(): ProactiveDecision;
     tick(): Promise<void>;
-    /** 聊完补话：45~180 秒窗口内，有想补的就补一句。 */
-    followupTick(): Promise<void>;
     /** 诊断用：返回当前判定与状态（面板/命令排查时读）。 */
     diagnose(): {
         chatId: string;

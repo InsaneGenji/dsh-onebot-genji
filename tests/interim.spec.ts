@@ -631,8 +631,11 @@ describe('interim tracker', () => {
     }))
     // 正文自动切气泡（issue #6）：104 字按句末标点切成 4 条独立消息，条间有
     // 800–1500ms 停顿，所以先等整批发完、再把各条的文本拼回原文做断言。
+    // 2026-11-22 起每条气泡末尾的「。」会被剥掉（主人要求聊天里不挂句号）；
+    // 这段文本正好一句一气泡，于是拼接结果里所有「。」都没了。
+    const expected = text.replace(/。/gu, '')
     await vi.waitFor(() => {
-      expect(outbound.filter(f => f.action === 'send_msg').map(textOf).join('')).toBe(text)
+      expect(outbound.filter(f => f.action === 'send_msg').map(textOf).join('')).toBe(expected)
     }, { timeout: 10_000 })
     const liveFrames = outbound.filter(f => f.action === 'send_msg')
     expect(liveFrames.length).toBeGreaterThan(1)
@@ -646,7 +649,7 @@ describe('interim tracker', () => {
     // Summary body: the full text appears exactly once, numbering stays
     // contiguous (no orphan "2." line from the empty-text sibling entry).
     const summary = outbound.slice(at).filter(f => f.action === 'send_msg').map(textOf).join('')
-    expect(summary).toBe('1. ' + text)
+    expect(summary).toBe('1. ' + expected)
     // Recall intact: every bubble of the interim is revoked.
     const liveIds = echoed.filter(e => e.action === 'send_msg').slice(0, liveFrames.length).map(e => e.id)
     expect(outbound.filter(f => f.action === 'delete_msg').map(f => (f.params as { message_id: string }).message_id).sort())
@@ -752,7 +755,7 @@ describe('interim tracker', () => {
     // Live behavior unchanged: one forward node + one body message.
     expect(nodesOf(outbound.find(f => f.action === 'send_private_forward_msg')!))
       .toEqual([{ name: '资料卡片', content: '这是查到的资料内容。' }])
-    expect(outbound.filter(f => f.action === 'send_msg').map(textOf)).toEqual(['正文结论如下。'])
+    expect(outbound.filter(f => f.action === 'send_msg').map(textOf)).toEqual(['正文结论如下'])
 
     const at = outbound.length
     ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
@@ -766,7 +769,7 @@ describe('interim tracker', () => {
     expect(postFwd).toHaveLength(1)
     expect(nodesOf(postFwd[0]!)).toEqual([{ name: '资料卡片', content: '这是查到的资料内容。' }])
     const summary = outbound.slice(at).filter(f => f.action === 'send_msg').map(textOf).join('')
-    expect(summary).toBe('1. 正文结论如下。')
+    expect(summary).toBe('1. 正文结论如下')
     // Recall intact: the fake forward id and the real body id both revoked.
     const bodyId = echoed.filter(e => e.action === 'send_msg').slice(0, 1).map(e => e.id)
     expect(outbound.filter(f => f.action === 'delete_msg').map(f => (f.params as { message_id: string }).message_id).sort())

@@ -1016,14 +1016,19 @@ describe('commands', () => {
     h.sendText('/xyzw')
     await settleOutbound(h)
     await vi.waitFor(() => {
-      expect(outboundTextJoined(h.outbound)).toContain('未知命令 /xyzw。发 /help 查看命令列表')
+      // 2026-11-22：出站切气泡会把每段末尾的「。」剥掉，这里按两段分别断言。
+      const text = outboundTextJoined(h.outbound)
+      expect(text).toContain('未知命令 /xyzw')
+      expect(text).toContain('发 /help 查看命令列表')
     })
     // Inputs shorter than 4 never use the edit-distance fallback (/xy would be
     // distance 2 from /id), so they stay suggestion-less and just get the hint.
     h.sendText('/xy')
     await settleOutbound(h)
     await vi.waitFor(() => {
-      expect(outboundTextJoined(h.outbound)).toContain('未知命令 /xy。发 /help 查看命令列表')
+      const text = outboundTextJoined(h.outbound)
+      expect(text).toContain('未知命令 /xy')
+      expect(text).toContain('发 /help 查看命令列表')
     })
     expect(h.captured.followups).toHaveLength(0)
     h.client.close()

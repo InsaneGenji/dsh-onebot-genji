@@ -186,13 +186,13 @@ export interface InboundContext {
    *  options.reactionMessageId = 群聊 @ 表情回执：该消息命中「显式 @ 机器人」
    *  时由 inbound 传入，桥在回合启动点 best-effort 贴一次表情（缺席=不贴）。 */
   dispatchFollowup(chatId: ChatId, text: string, role: UserRole, nickname?: string, options?: { reactionMessageId?: string }): Promise<void>
-  /** 群聊旁观 (#58)：未通过 @ 门控的群消息喂进每群旁听缓冲，规则触发时由
-   * 桥开一次回顾回合。桥侧 enabled=false 即返回（挂点零行为）；缺席（旧
-   * 测试桩）= 无旁观能力，drop 点行为与上游逐字节等价。 */
-  feedBystander?(chatId: ChatId, entry: { seq: string; time: number; userId: string; nickname: string; text: string }): Promise<void>
   /** 本地加（2026-11-19）：未 @ 的群消息记进「参考上下文条数」环缓冲（不触发
    * 任何回合）。缺席 = 零行为，与上游等价。 */
   recordGroupContext?(chatId: ChatId, entry: { time: number; userId: string; nickname: string; text: string }): void
+  /** 本地加（2026-11-20）：图片一落盘就立刻收进表情包库「未审核」。
+   * 主人把 5 分钟定时器换成了这里——收到即入库，不再等下一轮扫描。
+   * 缺席（旧测试桩 / 关掉自动收集）= 零行为，与上游等价。 */
+  collectSticker?(path: string): void
   /** T2 (P1): busy-turn policy seam — invoked for every non-command message
    * after ALL gates (dedup/policy/mention/media/rate-limit), right before the
    * turn dispatch, so queue/steer can never bypass an existing gate. Returns
@@ -384,17 +384,6 @@ export class InboundPipeline {
         nickname: inbound.nickname,
         text: inbound.text,
       })
-      // 群聊旁观 (#58)：被 @ 门挡下的消息不派发回合，改喂旁听缓冲（nickname
-      // 在此尚未消毒，桥侧渲染回顾文本时统一 sanitize）。seam 缺席 = 零行为。
-      if (this.ctx.feedBystander !== undefined) {
-        await this.ctx.feedBystander(chatId, {
-          seq: inbound.messageId ?? '',
-          time: inbound.time,
-          userId,
-          nickname: inbound.nickname,
-          text: inbound.text,
-        })
-      }
       return
     }
 
@@ -651,6 +640,9 @@ export class InboundPipeline {
         const settings = this.ctx.getSettings(chatId)
         settings.lastImagePath = resolved.path
         settings.pendingImageRef = undefined
+        // 2026-11-20 本地加：落盘即收进表情包库「未审核」（Hash 去重、删过的不回收）。
+        // 原先靠 5 分钟定时器扫媒体目录，主人要求改成零延迟。
+        this.ctx.collectSticker?.(resolved.path)
         // T6 (PR port GIF 分帧)：开关开启且确为 gif 时，旁边拼一张四格分帧长图
         // 附在消息里；关闭/失败一律静默为空串（不装依赖也不开开关时行为与上游
         // 逐字节等价）。

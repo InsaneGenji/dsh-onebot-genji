@@ -26,7 +26,7 @@ import type { TraceStage } from './trace.js';
  * task is running under the default 'queue' policy — at most ONE per running
  * turn (the flag resets at turn/end) so a burst of queued messages never
  * spams the chat. Exported for the deterministic text wait in tests. */
-export declare const QUEUE_NOTICE_TEXT = "\u23F3 \u5F53\u524D\u4EFB\u52A1\u8FD0\u884C\u4E2D\uFF0C\u65B0\u6D88\u606F\u5DF2\u6392\u961F\uFF0C\u5C06\u5728\u5F53\u524D\u4EFB\u52A1\u7ED3\u675F\u540E\u4F9D\u6B21\u5904\u7406\u3002";
+export declare const QUEUE_NOTICE_TEXT = "\u23F3 \u5F53\u524D\u4EFB\u52A1\u8FD0\u884C\u4E2D\uFF0C\u65B0\u6D88\u606F\u5DF2\u6392\u961F\uFF0C\u5C06\u5728\u5F53\u524D\u4EFB\u52A1\u7ED3\u675F\u540E\u4F9D\u6B21\u5904\u7406";
 export declare const VOICE_PROB = 0.1;
 export declare const STICKER_PROB = 0.39;
 export declare const VOICE_HINT: string;
@@ -133,17 +133,6 @@ export interface BridgeConfig {
      * 非受限发送者均可。不改变 /steer 命令（始终仅管理员）与 queue 模式行为，
      * 也不放宽受限用户软限制（受限消息任何档都排队）。 */
     autoSteerPolicy?: 'admin' | 'all';
-    /** 旁观总开关（默认关）：开启后未通过 @ 门控的群消息进每群环形缓冲，
-     * 规则触发（唤醒词/话题词/问句/机会触发）时开一次回顾回合。 */
-    bystanderEnabled?: boolean;
-    /** 每群旁听缓冲条数上限（默认 50）。 */
-    bystanderCapacity?: number;
-    /** 话题词表：消息文本包含任一词即触发回顾（子串匹配，大小写不敏感）。 */
-    bystanderTopics?: readonly string[];
-    /** 每群两次回顾回合的最小间隔分钟数（默认 45）。 */
-    bystanderCooldownMinutes?: number;
-    /** 每群每日回顾回合上限（本地日期键计数，默认 20）。 */
-    bystanderDailyLimit?: number;
     /** T3 (P2)：等待模型回复超时阈值（ms）——回合超过该时长没有任何模型输出
      * 时提示超时并登记补发跟踪（deferred delivery），回合完成后向原聊天补发
      * 最终文字（「（超时补发）」前缀，走既有 outbound 管线）；absent →
@@ -364,6 +353,9 @@ export interface BridgeDeps {
      * replaced by 已配置/未配置 — see health.redactSnapshot). Absent = the
      * /healthcheck diagnostics export renders without a config section. */
     configSnapshot?: (() => Record<string, unknown>) | undefined;
+    /** 本地加（2026-11-20）：把刚落盘的入站图片立刻收进表情包库「未审核」。
+     * 缺席（关掉自动收集 / 测试装配）= 零行为。 */
+    stickerCollect?: ((path: string) => void) | undefined;
     /** Log line callback (level, message). */
     log(level: 'info' | 'warn' | 'error' | 'debug', message: string): void;
 }
@@ -422,9 +414,6 @@ export declare class ChatBridge {
      * /new keeps it. Writes go through setSilentUntilImpl (memory + settings +
      * debounced save); a bare /silent clears both copies explicitly. */
     private readonly silentUntil;
-    /** 群聊旁观 (#58)：每群旁听环形缓冲 + 冷却/每日上限记账。惰性判定，
-     * 零定时器；缓冲不持久化（易失的「最近发生了什么」，重启后重新积累）。 */
-    private readonly bystander;
     /** 群聊上下文（2026-11-19 本地加）：每群最近 N 条未 @ 我的群消息，供被叫到那回合参考。
      *  不持久化（易失的「刚才在聊什么」），条数由 config.groupContextLines 控制。 */
     private readonly groupContextBuf;
@@ -557,12 +546,8 @@ export declare class ChatBridge {
      * - refresh 后台执行不 await 主流程；get/refresh 同步抛或拒绝都只
      *   warn（标题是辅助功能，失败静默降级，不冒泡进派发主流程）。 */
     private syncSessionTitle;
-    noteToolText(chatId: ChatId, text: string): void;
-    /**
-     * 回合末正文是否只是把工具刚说过的话又重复一遍（意思层面）。
-     * @returns true 表示重复，正文应丢弃。
-     */
-    isToolTopicDuplicate(chatId: ChatId, text: string): boolean;
+    /** 回合末正文去重（双发闸）与反向闸、账本，2026-11-22 整套删除（主人定：
+     * 正常聊天不调 qq_send_text，只在开长活时先吱一声，两边撞不上，闸不用留）。 */
     /** 每回合掷骰决定回合形式：语音条 / 表情包 / 纯文字（概率读配置，默认 10% / 39%）。 */
     rollTurnForm(): string;
     /**
@@ -577,15 +562,6 @@ export declare class ChatBridge {
     }): void;
     /** 本轮要注入的群聊上下文文本（没有返回 undefined）。 */
     groupContextRecent(chatId: ChatId): string | undefined;
-    /**
-     * 群聊旁观 (#58)：把一条未通过 @ 门控的群消息喂进旁听缓冲；规则触发命中
-     * 且会话空闲时开一次回顾回合（角色固定 member——旁听内容源自群消息，不可信，
-     * 绝不能拿 admin 档工具；与 memberTools='send' 档天然衔接）。
-     * enabled=false 时本方法在入口即返回（管线挂点零行为）。
-     */
-    private feedBystander;
-    /** 旁观参数聚合：bridge 扁平键逐项回落 BYSTANDER_DEFAULTS（absent = 默认关）。 */
-    private bystanderSettings;
     /** Prepend per-chat context directives (/goal reminder) to a turn's user
      * text. Plan mode is host-owned now (/plan forwards to the host command),
      * so the agent's own plan-mode instruction section governs planning. */

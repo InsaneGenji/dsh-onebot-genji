@@ -1,4 +1,4 @@
-declare const window: any;
+﻿declare const window: any;
 declare const document: any;
 /**
  * 2026-11-19（本地加）：表情包库面板用到的浏览器侧最小接口声明。
@@ -234,7 +234,7 @@ window.__ModuleLoader__.load({
 				],
 				fields: [
 					{ key: "requireMention", label: "群聊必须 @ 机器人", type: "boolean" },
-					{ key: "memberTools", label: "成员工具权限", type: "enum", options: ["none", "send", "all"], optionLabels: { none: "禁用全部", send: "仅发送类", all: "不限" }, hint: "非管理员回合可用的 qq_* 工具：仅发送类=可分条/发图（含工作区图库）" },
+					{ key: "memberTools", label: "成员工具权限", type: "enum", options: ["none", "send", "all"], optionLabels: { none: "禁用全部", send: "仅发送类", all: "不限" }, hint: "非管理员回合可用的 qq_* 工具：仅发送类=可分条 / 发图 / 发语音（含工作区图库）" },
 					{ key: "adminUsers", label: "管理员用户列表", type: "stringArray" },
 					{ key: "dmPolicy", label: "私聊策略", type: "enum", options: ["open", "allowlist", "disabled"], optionLabels: { open: "开放", allowlist: "白名单", disabled: "禁用" }, hint: "开放=任何人都能私聊；白名单=只有下面名单里的 QQ 号能私聊；禁用=谁都不理" },
 					{ key: "groupPolicy", label: "群聊策略", type: "enum", options: ["open", "allowlist", "disabled"], optionLabels: { open: "开放", allowlist: "白名单", disabled: "禁用" } },
@@ -262,8 +262,7 @@ window.__ModuleLoader__.load({
 					{ id: "dm", title: "私聊", keys: [
 						"proactiveEnabled", "proactiveTargetUsers", "proactiveMinIdleMinutes", "proactiveMinGapMinutes",
 						"proactiveMaxPerDay", "proactiveQuietFrom", "proactiveQuietTo", "proactiveAttemptGapMinutes",
-						"proactiveBurstProb", "proactiveFollowupEnabled", "proactiveFollowupMinSec",
-						"proactiveFollowupMaxSec", "proactiveFollowupProb", "proactiveFollowupMaxPerDay",
+						"proactiveBurstProb",
 					] },
 				],
 				fields: [
@@ -295,11 +294,6 @@ window.__ModuleLoader__.load({
 					{ key: "proactiveQuietTo", label: "安静时段止（小时）", type: "number", pattern: "^[0-9]+$", patternHint: "0–23 的整数", showIf: { key: "proactiveEnabled", value: true } },
 					{ key: "proactiveAttemptGapMinutes", label: "判定间隔（分钟）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", hint: "每次判定要不要发话的最小间隔", showIf: { key: "proactiveEnabled", value: true } },
 					{ key: "proactiveBurstProb", label: "连发概率", type: "number", hint: "0–1 之间的小数，比如 0.5；越大越容易一次说两三句", showIf: { key: "proactiveEnabled", value: true } },
-					{ key: "proactiveFollowupEnabled", label: "补一句话", type: "boolean", hint: "你先开口后，过一小会儿再补一句", showIf: { key: "proactiveEnabled", value: true } },
-					{ key: "proactiveFollowupMinSec", label: "补话最短等待（秒）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", showIf: { key: "proactiveFollowupEnabled", values: [true] } },
-					{ key: "proactiveFollowupMaxSec", label: "补话最长等待（秒）", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", showIf: { key: "proactiveFollowupEnabled", values: [true] } },
-					{ key: "proactiveFollowupProb", label: "补话概率", type: "number", hint: "0–1 之间的小数", showIf: { key: "proactiveFollowupEnabled", values: [true] } },
-					{ key: "proactiveFollowupMaxPerDay", label: "补话每天上限", type: "number", pattern: "^[0-9]+$", patternHint: "≥0 的整数", showIf: { key: "proactiveFollowupEnabled", values: [true] } },
 					// T11：DSH 首页左侧边栏入口开关（关=不注册侧边栏入口与配对面板；
 					// 插件菜单下的设置页入口保留。客户端按启动时快照决定，改完刷新生效）。
 														],
@@ -400,11 +394,6 @@ window.__ModuleLoader__.load({
 			groupContextLines: 3, // 本地加（2026-11-18）：被 @ 时带上的群聊上下文条数；默认 3
 			requireMention: true,
 			memberTools: "none",
-			bystanderEnabled: false,
-			bystanderCapacity: 50,
-			bystanderCooldownMinutes: 45,
-			bystanderDailyLimit: 20,
-			bystanderTopics: [],
 			adminUsers: [],
 			dmPolicy: "open",
 			groupPolicy: "open",
@@ -441,11 +430,6 @@ window.__ModuleLoader__.load({
 			proactiveQuietTo: 6,
 			proactiveAttemptGapMinutes: 30,
 			proactiveBurstProb: 0.5,
-			proactiveFollowupEnabled: true,
-			proactiveFollowupMinSec: 45,
-			proactiveFollowupMaxSec: 180,
-			proactiveFollowupProb: 0.3,
-			proactiveFollowupMaxPerDay: 3,
 			newMessagePolicy: "steer",
 			autoSteerPolicy: "admin",
 			deferredTimeoutMs: 600000,
@@ -497,8 +481,8 @@ window.__ModuleLoader__.load({
 		// src/bridge.ts、deferredTimeout=src/deferred.ts（X 为运行时秒数占位）、
 		// rateLimited=src/inbound.ts。
 		var NOTICE_KEYS = [
-			{ key: "steerAccepted", label: "插话提示", def: "✅ 已作为补充指令提交给当前任务，模型将在下一步读取。" },
-			{ key: "queue", label: "排队提示", def: "⏳ 当前任务运行中，新消息已排队，将在当前任务结束后依次处理。" },
+			{ key: "steerAccepted", label: "插话提示", def: "✅ 已作为补充指令提交给当前任务，模型将在下一步读取" },
+			{ key: "queue", label: "排队提示", def: "⏳ 当前任务运行中，新消息已排队，将在当前任务结束后依次处理" },
 			{ key: "answerAccepted", label: "回答回执", def: "✔ 已提交回答" },
 			{ key: "deferredTimeout", label: "超时补发提示", def: "⏳ 等待模型回复超时（已静默等待约 X 秒），任务仍在后台运行；完成后将自动补发最终结果。如需停止请发送 /stop。" },
 			{ key: "rateLimited", label: "限流提示", def: "⏳ 消息太频繁，请稍后再试。" },
@@ -636,11 +620,6 @@ window.__ModuleLoader__.load({
 			reactionEmoji: vNumber(0, 1000),
 			requireMention: vBoolean(),
 			memberTools: vEnum(["none", "send", "all"]),
-			bystanderEnabled: vBoolean(),
-			bystanderCapacity: vNumber(),
-			bystanderCooldownMinutes: vNumber(),
-			bystanderDailyLimit: vNumber(),
-			bystanderTopics: vArray(vString(0, 64)),
 			adminUsers: vArray(vString(0, 64)),
 			dmPolicy: vEnum(["open", "allowlist", "disabled"]),
 			groupPolicy: vEnum(["open", "allowlist", "disabled"]),
@@ -719,11 +698,6 @@ window.__ModuleLoader__.load({
 			proactiveQuietTo: vNumber(),
 			proactiveAttemptGapMinutes: vNumber(),
 			proactiveBurstProb: vNumber(),
-			proactiveFollowupEnabled: vBoolean(),
-			proactiveFollowupMinSec: vNumber(),
-			proactiveFollowupMaxSec: vNumber(),
-			proactiveFollowupProb: vNumber(),
-			proactiveFollowupMaxPerDay: vNumber(),
 			notices: vObject({
 				steerAccepted: vNoticeValue(),
 				queue: vNoticeValue(),
@@ -771,11 +745,6 @@ window.__ModuleLoader__.load({
 			sidebarEntryEnabled: vOptional(vBoolean()),
 			requireMention: vOptional(vBoolean()),
 			memberTools: vOptional(vEnum(["none", "send", "all"])),
-			bystanderEnabled: vOptional(vBoolean()),
-			bystanderCapacity: vOptional(vNumber(5, 500)),
-			bystanderCooldownMinutes: vOptional(vNumber(5, 1440)),
-			bystanderDailyLimit: vOptional(vNumber(1, 200)),
-			bystanderTopics: vOptional(vArray(vString(0, 64))),
 			adminUsers: vOptional(vArray(vString(0, 64))),
 			dmPolicy: vOptional(vEnum(["open", "allowlist", "disabled"])),
 			groupPolicy: vOptional(vEnum(["open", "allowlist", "disabled"])),
@@ -850,11 +819,6 @@ window.__ModuleLoader__.load({
 			proactiveQuietTo: vOptional(vNumber(0, 23)),
 			proactiveAttemptGapMinutes: vOptional(vNumber(0, 1440)),
 			proactiveBurstProb: vOptional(vNumber(0, 1)),
-			proactiveFollowupEnabled: vOptional(vBoolean()),
-			proactiveFollowupMinSec: vOptional(vNumber(0, 3600)),
-			proactiveFollowupMaxSec: vOptional(vNumber(0, 3600)),
-			proactiveFollowupProb: vOptional(vNumber(0, 1)),
-			proactiveFollowupMaxPerDay: vOptional(vNumber(0, 48)),
 			notices: vOptional(vObject({
 				steerAccepted: vNoticeValue(),
 				queue: vNoticeValue(),
@@ -1008,7 +972,6 @@ window.__ModuleLoader__.load({
 			"group.connection.desc": "连 NapCat 的通道",
 			"group.permissions.desc": "谁能触发与使用",
 			"group.behavior.desc": "回复、限流与消息处理",
-			"group.bystander.desc": "群聊旁观与主动插话",
 			"group.session.desc": "新会话与工作区",
 			"group.media.desc": "语音、图片与媒体限额",
 			"group.diagnostics.desc": "日志与调试",
@@ -1067,7 +1030,6 @@ window.__ModuleLoader__.load({
 			"group.connection.desc": "How it links to NapCat",
 			"group.permissions.desc": "Who can trigger it",
 			"group.behavior.desc": "Replies, limits and message handling",
-			"group.bystander.desc": "Group lurking and proactive remarks",
 			"group.session.desc": "New sessions and workspace",
 			"group.media.desc": "Voice, images and media caps",
 			"group.diagnostics.desc": "Logs and debugging",
@@ -1137,7 +1099,7 @@ window.__ModuleLoader__.load({
 				title: "Permissions",
 				fields: {
 					requireMention: { label: "Require @ in group chats" },
-				memberTools: { label: "Member tool access", options: { none: "All disabled", send: "Send-only", all: "Unrestricted" }, hint: "Which qq_* tools non-admin turns may use: send-only = split messages / send images (workspace galleries included)" },
+				memberTools: { label: "Member tool access", options: { none: "All disabled", send: "Send-only", all: "Unrestricted" }, hint: "Which qq_* tools non-admin turns may use: send-only = split messages / send images or voice (workspace galleries included)" },
 				adminUsers: { label: "Admin user list" },
 					dmPolicy: { label: "DM policy", options: { open: "Open", allowlist: "Allowlist", disabled: "Disabled" } },
 					groupPolicy: { label: "Group policy", options: { open: "Open", allowlist: "Allowlist", disabled: "Disabled" } },
@@ -1174,11 +1136,6 @@ window.__ModuleLoader__.load({
 					proactiveQuietTo: { label: "Quiet hours end (hour)" },
 					proactiveAttemptGapMinutes: { label: "Decision interval (minutes)", hint: "Minimum gap between two decide-run checks" },
 					proactiveBurstProb: { label: "Burst probability", hint: "Decimal 0-1, e.g. 0.5; higher = more likely to send two or three lines at once" },
-					proactiveFollowupEnabled: { label: "Follow-up line", hint: "After you speak first, add one more line a bit later" },
-					proactiveFollowupMinSec: { label: "Follow-up min wait (seconds)" },
-					proactiveFollowupMaxSec: { label: "Follow-up max wait (seconds)" },
-					proactiveFollowupProb: { label: "Follow-up probability", hint: "Decimal 0-1" },
-					proactiveFollowupMaxPerDay: { label: "Follow-up daily cap" },
 					newMessagePolicy: { label: "New messages while a task runs", options: { queue: "Queue", steer: "Steer" } },
 					autoSteerPolicy: { label: "Auto-steer eligibility", options: { admin: "Admins only", all: "All members" } },
 					deferredTimeoutMs: { label: "Model reply wait timeout (ms)" },
@@ -1579,10 +1536,6 @@ window.__ModuleLoader__.load({
 			interimRecallMs: [0, undefined],
 			inboxQueueDelayMs: [0, undefined],
 			deferredTimeoutMs: [0, undefined],
-			// #58 旁观：容量条数 / 冷却分钟 / 每日上限。
-			bystanderCapacity: [5, 500],
-			bystanderCooldownMinutes: [5, 1440],
-			bystanderDailyLimit: [1, 200],
 			textImageThreshold: [0, undefined],
 			// 本地加（2026-11-01）：媒体上限都做防呆——多打一位数当场标红。
 			// 键序与 ALL_FIELDS（媒体组字段序）一致，便于测试逐位对齐。
@@ -1599,10 +1552,6 @@ window.__ModuleLoader__.load({
 			proactiveQuietTo: [0, 23],
 			proactiveAttemptGapMinutes: [0, 1440],
 			proactiveBurstProb: [0, 1],
-			proactiveFollowupMinSec: [0, 3600],
-			proactiveFollowupMaxSec: [0, 3600],
-			proactiveFollowupProb: [0, 1],
-			proactiveFollowupMaxPerDay: [0, 48],
 		};
 
 		/**
@@ -2090,7 +2039,9 @@ window.__ModuleLoader__.load({
 								"aria-label": format(tr("notice.textAria", "{label}文案"), { label: noticeLabel }),
 							})));
 					}
-					// 本地改（2026-11-18）：发送错误通知挪到整组最下面（notices 段之后再插回）。
+					// 本地改（2026-11-18）：发送错误通知从原位摘出来，交给渲染末段重新插回。
+					// 本地改（2026-11-22）：插回位置改成「@notices 段之后、下一个分区标题之前」
+					//（即「限流提示」和「私聊」中间），不再挂到整组最末尾。
 					if (nk.key === "steerAccepted" && group.id === "behavior") consumed["sendErrorNotice"] = "tail";
 					// 本地改（2026-11-18）：等待模型回复超时挪到「超时补发提示」下面，只在它开着时显示。
 					if (nk.key === "deferredTimeout" && nOn && byKeyEarly["deferredTimeoutMs"] != null) {
@@ -2148,6 +2099,12 @@ window.__ModuleLoader__.load({
 							noticesPlaced = true;
 							for (var noticeRow of noticeRows)
 								sectionNodes.push(noticeRow);
+							// 本地改（2026-11-22）：发送错误通知夹在「限流提示」（通知段最后一项）
+							// 和下一个分区标题（私聊）之间，不再挂到整组最末尾。
+							if (consumedNoticeFields["sendErrorNotice"] === "tail") {
+								for (var tailNode of tailFieldNodes) sectionNodes.push(tailNode);
+								tailFieldNodes = [];
+							}
 							continue;
 						}
 						if (byKey[sectionKey] != null) sectionNodes.push(byKey[sectionKey]);
@@ -2155,6 +2112,8 @@ window.__ModuleLoader__.load({
 				}
 				// 本地改（2026-11-18）：分区块排在通知段之后、尾部字段（发送错误通知）之前。
 				// 本地改（2026-11-19）：分区里写了 "@notices" 时通知段已就地插入，不再重复追加。
+				// 本地改（2026-11-22）：sendErrorNotice 已随 @notices 就地插入（tailFieldNodes
+				// 被清空），所以尾部这里一般不会再有东西。
 				fieldNodes = looseNodes.concat(noticesPlaced ? [] : noticeRows).concat(sectionNodes).concat(tailFieldNodes);
 			}
 			// 组标题 + 一句人话描述（经 opts.groupDesc 传入；缺省不渲染）。标题走词条

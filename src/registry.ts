@@ -177,8 +177,6 @@ export interface ChatAgent {
    * t2i card). `sentAt` drives the per-message auto-recall scheduled after
    * each interim's send completes. */
   loopBuffer: Array<{ id: string; text: string; sentAt: number }>
-  /** 双发闸（2026-11-19 语义版）：本回合工具用 qq_send_text 发过的文本。 */
-  toolSentTexts: string[]
   /** Per-interim 90s (config interimRecallMs) auto-recall timers, keyed by
    * message id; cleared when turn/end recalls the originals immediately. */
   recallTimers: Map<string, ReturnType<typeof setTimeout>>
@@ -438,7 +436,6 @@ export class ChatRegistry {
       lastActivityAt: Date.now(),
       loopPending: null,
       loopBuffer: [],
-      toolSentTexts: [],
       recallTimers: new Map(),
       recalledInterimIds: new Set(),
       lastHandledMessageId: undefined,

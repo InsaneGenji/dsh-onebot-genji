@@ -107,8 +107,6 @@ export interface ChatAgent {
         text: string;
         sentAt: number;
     }>;
-    /** 双发闸（2026-11-19 语义版）：本回合工具用 qq_send_text 发过的文本。 */
-    toolSentTexts: string[];
     /** Per-interim 90s (config interimRecallMs) auto-recall timers, keyed by
      * message id; cleared when turn/end recalls the originals immediately. */
     recallTimers: Map<string, ReturnType<typeof setTimeout>>;

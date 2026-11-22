@@ -104,8 +104,6 @@ export interface InterimContext {
   relayHostCards(chatId: ChatId, content: readonly unknown[]): void
   /** Per-chat effective outbound mode (/mode override → global config). */
   effectiveInterim(chatId: ChatId): boolean
-  /** 双发闸（语义版）：回合末正文是不是把工具刚说过的话又重复一遍。 */
-  dropDuplicateFinal?(chatId: ChatId, text: string): boolean
   /** Bridge log line callback. */
   log(level: 'info' | 'warn' | 'error' | 'debug', message: string): void
   /** The only config fields the interim domain reads. */
@@ -237,24 +235,26 @@ export class InterimTracker {
       void this.settleLoop(chatId, chat)
     } else {
       rec.state = 'idle'
-      const final = chat.loopPending
-      if (final !== null) {
-        chat.loopPending = null
-        // T4 (PR port 沉默哨兵)：整段只有哨兵 → 只记日志，不发送。
-        if (isSilenceText(final)) {
-          this.ctx.log('info', 'silenced turn for ' + chatId)
-          return
-        }
-        // 双发闸（语义版，2026-11-19 加回）：工具已经用文字说过同一句时，
-        // 回合末正文只是重复就不发。
-        if (this.ctx.dropDuplicateFinal?.(chatId, final) === true) {
-          this.ctx.log('info', 'final dropped (duplicate of tool text): ' + chatId)
-          return
-        }
-        this.ctx.sendToChat(chatId, final, { queuable: true }).catch(error => {
-          this.ctx.log('warn', 'final send failed: ' + describeError(error))
-        })
+      const raw = chat.loopPending
+      if (raw === null) {
+        // 这一轮没有正文要发 → 直接算跑完。
+        return
       }
+      chat.loopPending = null
+      // T4 (PR port 沉默哨兵)：整段只有哨兵 → 只记日志，不发送。
+      if (isSilenceText(raw)) {
+        this.ctx.log('info', 'silenced turn for ' + chatId)
+        return
+      }
+      // 2026-11-22 双发闸整套删除（主人定：正常聊天不调 qq_send_text），正文原样发。
+      const final = raw
+      if (final.trim() === '') {
+        this.ctx.log('info', 'final dropped (empty): ' + chatId)
+        return
+      }
+      this.ctx.sendToChat(chatId, final, { queuable: true }).catch(error => {
+        this.ctx.log('warn', 'final send failed: ' + describeError(error))
+      })
     }
   }
 
@@ -422,16 +422,15 @@ export class InterimTracker {
       }
     }
     if (chat.loopPending !== null) {
-      const final = chat.loopPending
+      const raw = chat.loopPending
       chat.loopPending = null
       // T4 (PR port 沉默哨兵)：整段只有哨兵 → 只记日志，不发送。
-      if (isSilenceText(final)) {
+      if (isSilenceText(raw)) {
         this.ctx.log('info', 'silenced turn for ' + chatId)
-      } else if (this.ctx.dropDuplicateFinal?.(chatId, final) === true) {
-        this.ctx.log('info', 'final dropped (duplicate of tool text): ' + chatId)
       } else {
+        // 2026-11-22 双发闸整套删除（主人定：正常聊天不调 qq_send_text），正文原样发。
         try {
-          await this.ctx.sendToChat(chatId, final, { queuable: true })
+          await this.ctx.sendToChat(chatId, raw, { queuable: true })
         } catch (error) {
           this.ctx.log('warn', 'final send failed: ' + describeError(error))
         }

@@ -42,8 +42,6 @@ import { ASK_USER_TIMEOUT_SECONDS, registerAskUserTool, type AskUserAnswer, type
 import { holdForegroundWait, type AttachWaitPort, type ForegroundHold, type ForegroundQuestionRequest } from './ask-foreground.js'
 import { parseQuestionAnswer } from './question-answer.js'
 import { OutboundPipeline } from './outbound.js'
-// 群聊旁观 (#58)：未通过 @ 门控的群消息进旁听缓冲，规则触发回顾回合。
-import { BystanderTracker, BYSTANDER_DEFAULTS, type BystanderSettings } from './bystander.js'
 import type { OutboundSegment, SendOptions } from './outbound.js'
 import { ChatRegistry } from './registry.js'
 import type { ChatAgent } from './registry.js'
@@ -67,7 +65,9 @@ import type { TraceStage } from './trace.js'
  * task is running under the default 'queue' policy — at most ONE per running
  * turn (the flag resets at turn/end) so a burst of queued messages never
  * spams the chat. Exported for the deterministic text wait in tests. */
-export const QUEUE_NOTICE_TEXT = '⏳ 当前任务运行中，新消息已排队，将在当前任务结束后依次处理。'
+// 2026-11-22：末尾不带「。」——出站切气泡会按主人要求剥掉句末句号，常量若带句号
+// 就和实际发出去的文本对不上。
+export const QUEUE_NOTICE_TEXT = '⏳ 当前任务运行中，新消息已排队，将在当前任务结束后依次处理'
 
 // ---- 回合形式掷骰（语音条 / 表情包）--------------------------------------
 // 2026-11-13 主人定：私聊 / 群聊同一套；2026-11-19 把写死的 10% / 39% 改成配置项
@@ -197,18 +197,6 @@ export interface BridgeConfig {
    * 非受限发送者均可。不改变 /steer 命令（始终仅管理员）与 queue 模式行为，
    * 也不放宽受限用户软限制（受限消息任何档都排队）。 */
   autoSteerPolicy?: 'admin' | 'all'
-  // ---- 群聊旁观 (#58)：五键扁平（面板契约同形），absent = 逐项回落 BYSTANDER_DEFAULTS。
-  /** 旁观总开关（默认关）：开启后未通过 @ 门控的群消息进每群环形缓冲，
-   * 规则触发（唤醒词/话题词/问句/机会触发）时开一次回顾回合。 */
-  bystanderEnabled?: boolean
-  /** 每群旁听缓冲条数上限（默认 50）。 */
-  bystanderCapacity?: number
-  /** 话题词表：消息文本包含任一词即触发回顾（子串匹配，大小写不敏感）。 */
-  bystanderTopics?: readonly string[]
-  /** 每群两次回顾回合的最小间隔分钟数（默认 45）。 */
-  bystanderCooldownMinutes?: number
-  /** 每群每日回顾回合上限（本地日期键计数，默认 20）。 */
-  bystanderDailyLimit?: number
   /** T3 (P2)：等待模型回复超时阈值（ms）——回合超过该时长没有任何模型输出
    * 时提示超时并登记补发跟踪（deferred delivery），回合完成后向原聊天补发
    * 最终文字（「（超时补发）」前缀，走既有 outbound 管线）；absent →
@@ -413,6 +401,9 @@ export interface BridgeDeps {
    * replaced by 已配置/未配置 — see health.redactSnapshot). Absent = the
    * /healthcheck diagnostics export renders without a config section. */
   configSnapshot?: (() => Record<string, unknown>) | undefined
+  /** 本地加（2026-11-20）：把刚落盘的入站图片立刻收进表情包库「未审核」。
+   * 缺席（关掉自动收集 / 测试装配）= 零行为。 */
+  stickerCollect?: ((path: string) => void) | undefined
   /** Log line callback (level, message). */
   log(level: 'info' | 'warn' | 'error' | 'debug', message: string): void
 }
@@ -472,9 +463,6 @@ export class ChatBridge {
    * /new keeps it. Writes go through setSilentUntilImpl (memory + settings +
    * debounced save); a bare /silent clears both copies explicitly. */
   private readonly silentUntil = new Map<ChatId, number>()
-  /** 群聊旁观 (#58)：每群旁听环形缓冲 + 冷却/每日上限记账。惰性判定，
-   * 零定时器；缓冲不持久化（易失的「最近发生了什么」，重启后重新积累）。 */
-  private readonly bystander = new BystanderTracker()
   /** 群聊上下文（2026-11-19 本地加）：每群最近 N 条未 @ 我的群消息，供被叫到那回合参考。
    *  不持久化（易失的「刚才在聊什么」），条数由 config.groupContextLines 控制。 */
   private readonly groupContextBuf = new Map<ChatId, string[]>()
@@ -579,6 +567,8 @@ export class ChatBridge {
       sweepIdleChats: () => this.registry.sweepIdleChats(),
       media: deps.media,
       transcriber: deps.transcriber,
+      // 2026-11-20 本地加：收到图就收进「未审核」，不再等 5 分钟定时器。
+      collectSticker: path => deps.stickerCollect?.(path),
       steerTranscript: (chatId, text) => this.steerTranscript(chatId, text),
       tryHandleCommand: (chatId, text, userId, nickname) => this.tryHandleCommand(chatId, text, userId, nickname),
       // T3-board /silent: silence-window probe (reads the in-memory cache
@@ -597,8 +587,6 @@ export class ChatBridge {
       buildBody: (text, media, chatId) => this.buildBody(text, media, chatId),
       expandQuote: (messageId, verifiedData) => this.expandQuote(messageId, verifiedData),
       dispatchFollowup: (chatId, text, role, nickname, options) => this.dispatchFollowup(chatId, text, role, nickname, options),
-      // 群聊旁观 (#58)：mention 门 drop 点喂缓冲；seam 可选（旧测试桩缺席 = 零行为）。
-      feedBystander: (chatId, entry) => this.feedBystander(chatId, entry),
       // 2026-11-19 本地加：未 @ 的群消息记进「参考上下文条数」环缓冲（不触发回顾回合）。
       recordGroupContext: (chatId, entry) => this.recordGroupContext(chatId, entry),
       interceptBusyTurn: (chatId, text, role, nickname, plain) => this.interceptBusyTurn(chatId, text, role, nickname, plain),
@@ -614,8 +602,6 @@ export class ChatBridge {
       chainTail: chatId => this.outbound.chainTail(chatId),
       relayHostCards: (chatId, content) => this.relayHostCards(chatId, content),
       effectiveInterim: chatId => this.effectiveInterim(chatId),
-      // 双发闸（语义版，2026-11-19 主人要回）：工具说过的话，回合末正文再说一遍就丢。
-      dropDuplicateFinal: (chatId, text) => this.isToolTopicDuplicate(chatId, text),
       log: (level, message) => this.deps.log(level, message),
       config: deps.config,
     })
@@ -886,15 +872,12 @@ export class ChatBridge {
   /** Feed one user message into a chat's agent (create on demand). Records
    * the base text for /retry, queues the initiator's turn role, and applies
    * per-chat /goal + /plan prefixes. */
-  private async dispatchFollowup(chatId: ChatId, text: string, role: UserRole, nickname?: string, options?: { recordTail?: boolean; bystander?: boolean; reactionMessageId?: string }): Promise<void> {
+  private async dispatchFollowup(chatId: ChatId, text: string, role: UserRole, nickname?: string, options?: { recordTail?: boolean; reactionMessageId?: string }): Promise<void> {
     const final = this.prefixTurn(chatId, text)
     const fallback = this.chats.get(chatId)?.lastNickname ?? ''
     const chat = await this.ensureChat(chatId, nickname ?? fallback)
     if (nickname !== undefined && nickname !== '') chat.lastNickname = nickname
-    // #58 旁观回合不是用户发言：不写 lastFollowup（/retry 基底不被旁听
-    // 回顾文本顶掉）、不记尾巴、不触发标题同步；队列/interim/followup 照常。
-    const isBystander = options?.bystander === true
-    if (!isBystander) chat.lastFollowup = text
+    chat.lastFollowup = text
     chat.lastActivityAt = Date.now()
     // M3-D2a: a dispatched user turn starts a fresh interim cycle (the
     // inbound residue reset already cleared the loop fields directly).
@@ -905,7 +888,7 @@ export class ChatBridge {
     chat.pendingTurnRoles.push(role)
     // T4 (PR port 上下文尾巴)：记一条用户消息进尾巴（开关开启时）。问候回合
     // 的合成首轮用 recordTail:false 不记（否则问候会顶掉真正的尾巴）。
-    if (options?.recordTail !== false && options?.bystander !== true && this.deps.config.chatTailsEnabled === true) {
+    if (options?.recordTail !== false && this.deps.config.chatTailsEnabled === true) {
       this.tails.push(chatId, 'user', text)
     }
     this.deps.log('info', 'followup from ' + chatId + ': ' + final.slice(0, 120))
@@ -939,9 +922,8 @@ export class ChatBridge {
     if (injectedRound !== undefined) this.injectRoundByChat.set(chatId, injectedRound.traceId)
     else this.injectRoundByChat.delete(chatId)
     this.deps.config.inject?.noteDispatch(chatId)
-    // T24 (PR port 会话标题同步)：派发回合后按开关门控触发宿主标题刷新
-    // （#58 旁观回合不刷——标题不被旁听回顾文本带跑）。
-    if (!isBystander) this.syncSessionTitle(chat)
+    // T24 (PR port 会话标题同步)：派发回合后按开关门控触发宿主标题刷新。
+    this.syncSessionTitle(chat)
     // 群聊 @ 表情回执：回合启动点（与 startTyping 同位）best-effort 贴一次
     // 表情——每条消息最多一次（调用点唯一、由 inbound 传 reactionMessageId）。
     if (options?.reactionMessageId !== undefined) this.sendReactionReceipt(chatId, options.reactionMessageId)
@@ -1051,29 +1033,10 @@ export class ChatBridge {
     refresh()
   }
 
-  noteToolText(chatId: ChatId, text: string): void {
-    const chat = this.chats.get(chatId)
-    if (chat === undefined) return
-    const body = String(text ?? '').trim()
-    if (body === '') return
-    if (!Array.isArray(chat.toolSentTexts)) chat.toolSentTexts = []
-    chat.toolSentTexts.push(body)
-    if (chat.toolSentTexts.length > 8) chat.toolSentTexts.shift()
-  }
+  /** 回合末正文去重（双发闸）与反向闸、账本，2026-11-22 整套删除（主人定：
+   * 正常聊天不调 qq_send_text，只在开长活时先吱一声，两边撞不上，闸不用留）。 */
 
-  /**
-   * 回合末正文是否只是把工具刚说过的话又重复一遍（意思层面）。
-   * @returns true 表示重复，正文应丢弃。
-   */
-  isToolTopicDuplicate(chatId: ChatId, text: string): boolean {
-    const chat = this.chats.get(chatId)
-    const list = Array.isArray(chat?.toolSentTexts) ? chat.toolSentTexts : []
-    if (list.length === 0) return false
-    // 2026-11-19 主人选第二种：本回合只要工具发过话，回合末正文一律不发。
-    // 原来的二元组相似度判重掐不住「换个说法重复」，所以改成这条更硬的规矩。
-    void text
-    return list.length > 0
-  }
+
 
   /** 每回合掷骰决定回合形式：语音条 / 表情包 / 纯文字（概率读配置，默认 10% / 39%）。 */
   rollTurnForm(): string {
@@ -1119,46 +1082,6 @@ export class ChatBridge {
     if (list === undefined || list.length === 0) return undefined
     return '【群聊上下文】最近 ' + list.length + ' 条群消息（本轮之前群里在聊什么，供你参考，别逐条复述）：\n'
       + list.map(line => '- ' + line).join('\n')
-  }
-
-  /**
-   * 群聊旁观 (#58)：把一条未通过 @ 门控的群消息喂进旁听缓冲；规则触发命中
-   * 且会话空闲时开一次回顾回合（角色固定 member——旁听内容源自群消息，不可信，
-   * 绝不能拿 admin 档工具；与 memberTools='send' 档天然衔接）。
-   * enabled=false 时本方法在入口即返回（管线挂点零行为）。
-   */
-  private async feedBystander(chatId: ChatId, entry: { seq: string; time: number; userId: string; nickname: string; text: string }): Promise<void> {
-    const settings = this.bystanderSettings()
-    if (!settings.enabled) return
-    // 唤醒词走 gateConfig 的可选交叉成员（index.ts apply() spread 接线，
-    // 见 InboundContext.config），BridgeConfig 类型不声明——同管线读法取值。
-    const cfg = this.deps.config as BridgeConfig & TraceBridgeConfig & { wakeNamesAdmin?: string[]; wakeNamesMember?: string[] }
-    const wakeNames = [...(cfg.wakeNamesAdmin ?? []), ...(cfg.wakeNamesMember ?? [])]
-    const trigger = this.bystander.feed(chatId, entry, settings, { wakeNames, nowMs: Date.now() })
-    if (trigger === null) return
-    // 忙回合跳过：运行中的回合不接受旁观回顾（插队语义混乱；冷却不消耗，
-    // 空闲后的下一条消息会自然再触发）。
-    const chat = this.chats.get(chatId)
-    if (chat !== undefined && chat.agent.status === 'running') {
-      this.deps.log('debug', '旁观触发跳过：回合进行中 ' + chatId + ' (' + trigger + ')')
-      return
-    }
-    const reviewText = this.bystander.buildReviewText(chatId)
-    if (reviewText === null) return
-    this.bystander.markDispatched(chatId, settings, Date.now())
-    this.deps.log('info', '旁观回顾回合 (' + trigger + '): ' + chatId)
-    await this.dispatchFollowup(chatId, reviewText, 'member', undefined, { bystander: true })
-  }
-
-  /** 旁观参数聚合：bridge 扁平键逐项回落 BYSTANDER_DEFAULTS（absent = 默认关）。 */
-  private bystanderSettings(): BystanderSettings {
-    return {
-      enabled: this.deps.config.bystanderEnabled === true,
-      capacity: this.deps.config.bystanderCapacity ?? BYSTANDER_DEFAULTS.capacity,
-      topics: this.deps.config.bystanderTopics ?? BYSTANDER_DEFAULTS.topics,
-      cooldownMinutes: this.deps.config.bystanderCooldownMinutes ?? BYSTANDER_DEFAULTS.cooldownMinutes,
-      dailyLimit: this.deps.config.bystanderDailyLimit ?? BYSTANDER_DEFAULTS.dailyLimit,
-    }
   }
 
   /** Prepend per-chat context directives (/goal reminder) to a turn's user
@@ -1775,8 +1698,10 @@ export class ChatBridge {
       // empty queue and fall back to the initiator-based判定（T1 PR port：
       // 私聊查管理员名单，群聊 fail-closed member）。
       chat.activeTurnRole = chat.pendingTurnRoles.shift() ?? this.hostTurnRole(chatId)
-      // 双发闸（语义版）：新回合清空上一回合工具说过的话。
-      chat.toolSentTexts = []
+      // 双发闸（2026-11-20 定稿）：turn/start **不动**账本。steer 会在同一轮里
+      // 插出第二个 turn/start，一清表就把刚用 qq_send_text 发过的话抹了，回合末
+      // 正文于是原样又播一遍（主人 13:24 抓到的重复）。账本清空点挪到 turn/end
+      // 之后（见 onSessionEvent turn/end 分支与 InterimTracker 的收尾回调）。
       chat.lastActivityAt = Date.now()
       chat.busy = true
       // T3 (P2): arm the deferred silent-wait window for this turn（每次模型

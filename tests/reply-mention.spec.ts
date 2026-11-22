@@ -346,11 +346,17 @@ describe('wake-name gate (T1 PR port: 唤醒词)', () => {
     })
   })
 
-  it('does not wake on a wake-name substring inside the message body', async () => {
+  it('wakes on a wake-name substring inside the message body (2026-11-20 includes 语义)', async () => {
+    // 唤醒词改成「句中出现即算」（includes）之后，正文中段的子串也能叫醒 ——
+    // 「大鱼」「黑鱼」这类复合词里的唤醒词必须能触发。
     const h = makeHarness({ config: { wakeNamesMember: ['小雪'] } })
     await runWithTrace(h.trace, () => h.pipeline.processInbound(inbound([midText])))
-    expect(h.dispatchFollowup).not.toHaveBeenCalled()
-    expect(h.emit).toHaveBeenCalledExactlyOnceWith('mention', { ok: false, reason: TRACE_REASONS.inboundUnmentioned })
+    expect(h.dispatchFollowup).toHaveBeenCalledTimes(1)
+    expect(h.emit).toHaveBeenCalledExactlyOnceWith('mention', {
+      ok: true,
+      reason: TRACE_REASONS.inboundWakeName,
+      data: { names: ['小雪'], textLen: expect.any(Number), preview: expect.any(String) },
+    })
   })
 
   it('merges the two wake lists: a name in either list wakes anyone (2026-11-18 合并)', async () => {

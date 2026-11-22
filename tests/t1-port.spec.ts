@@ -67,15 +67,16 @@ describe('T1 PR port: 唤醒词端到端', () => {
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     expect(h.captured.followups[0].text).toContain('帮我看看这个')
 
-    // 正文中段的子串命中不算（startsWith 收紧语义）。
+    // 正文中段的子串命中也算（2026-11-20 本地改成 includes 语义：
+    // 「大鱼」「黑鱼」这类复合词里的唤醒词也要能叫醒，所以不再要求开头命中）。
     h.client.send(JSON.stringify({
       post_type: 'message', message_type: 'group', group_id: 888, user_id: 20003, self_id: 10002,
       message: [{ type: 'text', data: { text: '帮我看看小雪这个' } }],
       raw_message: '帮我看看小雪这个',
       sender: { user_id: 20003, nickname: '小张' },
     }))
-    await new Promise(resolve => setTimeout(resolve, 200))
-    expect(h.captured.followups).toHaveLength(1)
+    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2))
+    expect(h.captured.followups[1].text).toContain('帮我看看小雪这个')
     h.client.close()
     await h.bridge.stop()
     await h.connection.stop()
