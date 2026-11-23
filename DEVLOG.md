@@ -1081,3 +1081,10 @@ docker restart 会丢登录态（需重新扫码/QCE 登录）
 - **删掉双发闸死代码（src/outbound.ts）**：`isDuplicateTopic` / `textTopicKey` / `topicSimilarity` / `DUPLICATE_TOPIC_THRESHOLD` 全仓库零调用，整块删除（约 2KB）。现在只剩语音条那一处去重。
 
 验证：tsc exit 0；全量 1159 tests / 1143 passed / 3 skipped / 13 failed（13 个全是 Windows 环境固有：commands×2、media-cleanup×1、media-guard×5、stt-silk×1、tools-gate×4，在干净 HEAD worktree 上同样失败）；八个 `startup/settings-*.mjs` 校验脚本全 exit 0。
+
+## 2026-11-23 本地分叉 0.17.0：正文表情包标签 + qq_send_text 口径放宽
+
+- **正文表情包标签（新增 src/sticker-tag.ts）**：正文里写 `<表情:关键词>`（也认 `<表情包:>`、`<sticker:>`、中文冒号），插件把标签摘掉，按关键词从「已审核」库里挑一张图**单独发出去**，匹配不上就当没写、标签也不会漏到聊天里。打分口径：标签全等 3 分 > 标签包含 2 分 > 描述包含 1 分，同分取传入顺序；只认 `approved && exists`。反引号包裹的写法原样保留（想讲这个语法时不会被吞）。实现：`extractStickerTags` 切标签 + `pickStickerByTag` 选图；`OutboundContext.pickSticker` 接桥；`OutboundPipeline.sendToChat` 在正文气泡全发完之后逐个补图，超 `maxImageBytes` 跳过。选图走 `StickerStore.approvedPathOf`。提示词里写明表情包**不要**用 `qq_send_image` 发。动机是看了 aurabot 的 `|||` / `<voice>` / `<sticker:>` 标签协议后取的唯一一项——其余（分气泡、发语音、引用、沉默）我们本来就用工具边界做得更硬。
+- **qq_send_text 口径第四次放宽（src/prompt.ts / src/tools.ts）**：从「只有唱歌和画图能用」改成「**要开长活之前真调一次**说一声」——跑构建、跑全量测试、下载大文件、启动游戏或服务、画图、出视频、点歌唱歌，这类要等几十秒以上的活先说一句再动手；关键是**真的要发出去**，只在思考里想「先回用户一句」不算。长活干完写正文汇报，不重复开头那句；短活一律正文。判据：要等就先吱声，说过的别再说第二遍。
+- **气泡条数不封顶（src/outbound.ts）**：带编号列表 `limit = merged.length`，一行一条写多少发多少；普通聊天仍是 `maxBubbles`（默认 4）。
+- **验证**：tsc exit 0；新增 `tests/sticker-tag.spec.ts` 12 例；全量 1171 tests / 1155 passed / 3 skipped / 13 failed（13 个全是 Windows 环境固有：commands×2、media-cleanup×1、media-guard×5、stt-silk×1、tools-gate×4）。真机验过：带 `<表情:得意>` 的正文标签被摘、图发出；写不存在的关键词标签不会漏。

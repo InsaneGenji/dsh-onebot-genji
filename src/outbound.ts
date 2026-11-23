@@ -9,7 +9,7 @@
  * bridge-resident) keep working unchanged.
  * @module dsh-onebot/outbound
  */
-import { appendFile, mkdir } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { BridgeConfig } from './bridge.js'
@@ -21,6 +21,7 @@ import { renderTextImage } from './t2i/index.js'
 import { describeError } from './errors.js'
 import { TRACE_REASONS } from './trace.js'
 import type { TraceStage } from './trace.js'
+import { extractStickerTags } from './sticker-tag.js'
 
 /** One OneBot message segment for outbound sends. */
 export interface OutboundSegment {
@@ -483,6 +484,10 @@ export interface OutboundContext {
   isStopping(): boolean
   /** Bridge log line callback. */
   log(level: 'info' | 'warn' | 'error' | 'debug', message: string): void
+  /** 本地加（2026-11-23）：正文 `<表情:关键词>` 标签解析——按关键词在「已审核」
+   * 库里挑一张图，返回绝对路径；返回空 = 没匹配上（静默不发）。
+   * 缺席 = 不做标签解析，正文里的标签原样保留（测试装配 / 开关关掉）。 */
+  pickSticker?: (key: string) => Promise<string | null> | string | null
   /** W1: emit one outbound/queue decision event for a chat. The bridge owns
    * the traceId resolution (chat-level association table; unmapped proactive
    * writes mint a fresh id) — absent = tracing off, zero cost. */
@@ -594,7 +599,14 @@ export class OutboundPipeline {
       // T9 (#2): the model may echo the <user_message> boundary that
       // wrapUserMessage injected — strip the markers before delivery so both
       // the t2i card and the plain-text branch stay clean.
-      const clean = stripBoundaryLeakage(body)
+      const leaked = stripBoundaryLeakage(body)
+      // 2026-11-23 本地加：正文表情包标签（`<表情:得意>`）。摘掉标签拿到关键词，
+      // 关键词交给 ctx.pickSticker 去「已审核」库里找图；匹配不上就当没写。
+      // 没接 pickSticker（测试装配 / 关掉开关）= 连正则都不跑，正文原样。
+      const tagged = this.ctx.pickSticker === undefined
+        ? { text: leaked, keys: [] as string[] }
+        : extractStickerTags(leaked)
+      const clean = tagged.text
       // T2 (PR port): 整条只有括号旁白——拦在卡片之前，直接不发
       //（asideOnlySilentEnabled 独立开关，默认关闭不拦）。
       if (this.ctx.config.asideOnlySilentEnabled === true && nodes.length === 0 && isAsideOnly(clean)) {
@@ -659,6 +671,26 @@ export class OutboundPipeline {
           // pipeline-hooks.md #30: the empty-body skip used to be silent.
           this.ctx.log('debug', '正文为空，未发送: ' + chatId)
           this.ctx.trace?.(chatId, { stage: 'outbound', ok: false, reason: TRACE_REASONS.outboundEmptyText })
+        }
+      }
+      // 表情包标签落成真图：正文全发完之后再发，一条一个（标签本来就是
+      // 「这句说完贴一张」，插在句子中间反而打断）。找不到图的静默跳过。
+      for (const key of tagged.keys) {
+        const file = await this.ctx.pickSticker?.(key)
+        if (file === undefined || file === null || file === '')
+          continue
+        try {
+          const info = await stat(file)
+          if (info.size > this.ctx.config.maxImageBytes) {
+            this.ctx.log('warn', '表情包超出发图上限，跳过: ' + file)
+            continue
+          }
+          const data = await readFile(file)
+          const id = await this.sendMsg(chatId, [{ type: 'image', data: { file: 'base64://' + data.toString('base64') } }], {})
+          if (id !== undefined) ids.push(id)
+        }
+        catch (error) {
+          this.ctx.log('warn', '表情包发送失败（跳过）: ' + describeError(error))
         }
       }
       this.ctx.trace?.(chatId, { stage: 'outbound', ok: true, reason: '回复已发送', data: { segments: ids.length } })

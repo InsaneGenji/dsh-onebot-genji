@@ -151,6 +151,9 @@ export declare class StickerStore {
     save(): void;
     dirOf(item: StickerRecord): string;
     pathOf(item: StickerRecord): string;
+    /** 2026-11-23 本地加：按文件名拼「已审核」目录下的绝对路径。
+     *  表情包标签只从这里挑图（未审核的不进聊天），所以不用先拿到记录。 */
+    approvedPathOf(file: string): string;
     /** 面板列表用：把记录整理成平面数组（不读图片字节）。 */
     list(): StickerItemView[];
     /**

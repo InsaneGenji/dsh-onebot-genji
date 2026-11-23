@@ -356,6 +356,9 @@ export interface BridgeDeps {
     /** 本地加（2026-11-20）：把刚落盘的入站图片立刻收进表情包库「未审核」。
      * 缺席（关掉自动收集 / 测试装配）= 零行为。 */
     stickerCollect?: ((path: string) => void) | undefined;
+    /** 本地加（2026-11-23）：正文 `<表情:关键词>` 标签 → 已审核库里的一张图
+     * （返回绝对路径，null = 没匹配上）。缺席 = 不做标签解析。 */
+    stickerPick?: ((key: string) => string | null) | undefined;
     /** Log line callback (level, message). */
     log(level: 'info' | 'warn' | 'error' | 'debug', message: string): void;
 }
