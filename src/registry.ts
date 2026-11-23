@@ -202,6 +202,13 @@ export interface ChatAgent {
   activeTurnRole: UserRole
   /** The last user message text actually fed to the agent (for /retry). */
   lastFollowup: string | undefined
+  /** 本地加（2026-11-23）：本回合形式掷骰命中了「语音条」。语音条那轮模型的
+   * 话本身就该由语音条承载，正文再发一遍就是重复（主人 2026-11-23 抓到的
+   * 现象）。派发新回合时由 dispatchFollowup 重置。 */
+  turnFormVoice: boolean
+  /** 本地加（2026-11-23）：本回合已经通过 qq_send_voice 成功发出一条语音。
+   * 与 turnFormVoice 同时为真时，回合末的正文丢弃不发。 */
+  voiceSentThisTurn: boolean
 }
 
 /** The preset id a session's own record names: newest logged selection, else the creation header. */
@@ -447,6 +454,8 @@ export class ChatRegistry {
       pendingTurnRoles: [],
       activeTurnRole: 'member',
       lastFollowup: undefined,
+      turnFormVoice: false,
+      voiceSentThisTurn: false,
     }
   }
 

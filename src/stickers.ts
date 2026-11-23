@@ -356,6 +356,10 @@ export class StickerStore {
       if (item == null || typeof item.hash !== 'string') {
         delete this.index.items[hash]
         gone.push(hash)
+        // 2026-11-23 主人报的 bug：删掉的图重启后又回到未审核。
+        // 脏条目也要留墓碑，否则 media 目录里的源图会被 collect() 原样重收。
+        const dirty = isUnknownArray(this.index.deleted) ? this.index.deleted : []
+        this.index.deleted = [hash, ...dirty.filter((one) => one !== hash)].slice(0, DELETED_LIMIT)
         continue
       }
       let present = false
@@ -368,6 +372,11 @@ export class StickerStore {
       if (present)
         continue
       delete this.index.items[hash]
+      // 2026-11-23 主人报的 bug：面板里删掉的图，重启后又被自动收集收回未审核。
+      // 索引里有、磁盘上没了，等于这张已经被删过/不想要——跟 remove() 一样记墓碑，
+      // 否则 collect(mediaDir) 会拿 media 目录里的源图按内容哈希原样重收。
+      const deleted = isUnknownArray(this.index.deleted) ? this.index.deleted : []
+      this.index.deleted = [item.hash, ...deleted.filter((one) => one !== item.hash)].slice(0, DELETED_LIMIT)
       gone.push(item.hash)
     }
     // 2026-11-19 事故：库里 188 条一起被判「文件丢失」，索引被整个清空（图片其实还在）。

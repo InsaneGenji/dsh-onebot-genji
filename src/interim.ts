@@ -63,6 +63,11 @@ export interface InterimChat {
   /** Last assistant message id already handled — duplicate session events
    * (streaming/usage re-emits of the same message) must not re-send it. */
   lastHandledMessageId: string | undefined
+  /** 本地加（2026-11-23）：本回合掷骰命中语音条。 */
+  turnFormVoice: boolean
+  /** 本地加（2026-11-23）：本回合已成功发出一条语音条。两者同时为真时，
+   * 回合末的正文就是同一句话的重复，丢弃不发。 */
+  voiceSentThisTurn: boolean
 }
 
 /** The explicit per-chat cycle state (M3-D2a). 'idle': nothing deferred or
@@ -252,10 +257,24 @@ export class InterimTracker {
         this.ctx.log('info', 'final dropped (empty): ' + chatId)
         return
       }
+      if (this.dropVoiceDuplicate(chatId, chat)) return
       this.ctx.sendToChat(chatId, final, { queuable: true }).catch(error => {
         this.ctx.log('warn', 'final send failed: ' + describeError(error))
       })
     }
+  }
+
+  /**
+   * 本地加（2026-11-23）：语音条回合的正文丢弃判定。掷骰命中语音条、并且
+   * 本回合确实发出去了一条语音 —— 那语音里念的就是这句话，正文再发一遍就
+   * 是 QQ 里两条一模一样的内容（主人 2026-11-23 抓到的那次）。
+   * 只发文字没发语音（模型没调 qq_send_voice）时不丢，否则那轮会彻底没声音
+   * 也没字。
+   */
+  private dropVoiceDuplicate(chatId: ChatId, chat: InterimChat): boolean {
+    if (!chat.turnFormVoice || !chat.voiceSentThisTurn) return false
+    this.ctx.log('info', 'final dropped (voice turn): ' + chatId)
+    return true
   }
 
   /** Cancel a message's pending 90s auto-recall timer. */
@@ -427,6 +446,8 @@ export class InterimTracker {
       // T4 (PR port 沉默哨兵)：整段只有哨兵 → 只记日志，不发送。
       if (isSilenceText(raw)) {
         this.ctx.log('info', 'silenced turn for ' + chatId)
+      } else if (this.dropVoiceDuplicate(chatId, chat)) {
+        // 语音条已念过这句话，正文不再发。
       } else {
         // 2026-11-22 双发闸整套删除（主人定：正常聊天不调 qq_send_text），正文原样发。
         try {

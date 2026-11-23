@@ -500,6 +500,11 @@ export declare class ChatBridge {
      */
     sendSegments(chatId: ChatId, segments: OutboundSegment[]): Promise<string | undefined>;
     /**
+     * 本地加（2026-11-23）：qq_send_voice 成功发出后记账——本回合已经有语音条
+     * 承载内容了。语音条回合的回合末正文据此丢弃（interim 的 dropVoiceDuplicate）。
+     */
+    noteVoiceSent(chatId: ChatId): void;
+    /**
      * Wait for the loader's complete application (model selection, settings,
      * persistence) before reading the default model — the same gate the
      * headless runner uses, so the pinned selection is never a half-loaded

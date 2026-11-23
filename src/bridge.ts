@@ -782,6 +782,15 @@ export class ChatBridge {
   }
 
   /**
+   * 本地加（2026-11-23）：qq_send_voice 成功发出后记账——本回合已经有语音条
+   * 承载内容了。语音条回合的回合末正文据此丢弃（interim 的 dropVoiceDuplicate）。
+   */
+  noteVoiceSent(chatId: ChatId): void {
+    const chat = this.chats.get(chatId)
+    if (chat !== undefined) chat.voiceSentThisTurn = true
+  }
+
+  /**
    * Wait for the loader's complete application (model selection, settings,
    * persistence) before reading the default model — the same gate the
    * headless runner uses, so the pinned selection is never a half-loaded
@@ -898,6 +907,10 @@ export class ChatBridge {
     // 回合形式掷骰（本地补丁 2026-11-13 / 2026-11-19 配置化）：命中时把形式
     // 指令作为第二段文本追加给模型，不改用户原话。
     const turnForm = this.rollTurnForm()
+    // 本地加（2026-11-23）：语音条回合的哨兵——本回合模型的话由语音条承载，
+    // 正文不再发一遍（主人抓到的「语音条+重复文字」就是这么来的）。
+    chat.turnFormVoice = turnForm === VOICE_HINT
+    chat.voiceSentThisTurn = false
     const turnContent: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: final }]
     if (turnForm !== '') turnContent.push({ type: 'text', text: turnForm })
     chat.agent.followup(createUserMessage({

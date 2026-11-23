@@ -53,6 +53,11 @@ export interface InterimChat {
     /** Last assistant message id already handled — duplicate session events
      * (streaming/usage re-emits of the same message) must not re-send it. */
     lastHandledMessageId: string | undefined;
+    /** 本地加（2026-11-23）：本回合掷骰命中语音条。 */
+    turnFormVoice: boolean;
+    /** 本地加（2026-11-23）：本回合已成功发出一条语音条。两者同时为真时，
+     * 回合末的正文就是同一句话的重复，丢弃不发。 */
+    voiceSentThisTurn: boolean;
 }
 /** The explicit per-chat cycle state (M3-D2a). 'idle': nothing deferred or
  * in flight. 'accumulating': a turn is producing text (interims booking,
@@ -131,6 +136,14 @@ export declare class InterimTracker {
      * pass found only a drained trail before the rewrite (a harmless no-op),
      * and skipping it keeps the two passes from racing. */
     onTurnEnd(chatId: ChatId, chat: InterimChat): void;
+    /**
+     * 本地加（2026-11-23）：语音条回合的正文丢弃判定。掷骰命中语音条、并且
+     * 本回合确实发出去了一条语音 —— 那语音里念的就是这句话，正文再发一遍就
+     * 是 QQ 里两条一模一样的内容（主人 2026-11-23 抓到的那次）。
+     * 只发文字没发语音（模型没调 qq_send_voice）时不丢，否则那轮会彻底没声音
+     * 也没字。
+     */
+    private dropVoiceDuplicate;
     /** Cancel a message's pending 90s auto-recall timer. */
     private clearInterimTimer;
     /**

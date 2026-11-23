@@ -286,6 +286,8 @@ describe('ChatBridge', () => {
       pendingTurnRoles: c.pendingTurnRoles,
       activeTurnRole: c.activeTurnRole,
       lastFollowup: c.lastFollowup,
+      turnFormVoice: c.turnFormVoice,
+      voiceSentThisTurn: c.voiceSentThisTurn,
       typingTimer: c.typingTimer,
     })
     const h1 = await makeHarness()

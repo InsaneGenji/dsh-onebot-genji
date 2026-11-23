@@ -58,6 +58,7 @@ function makeInterimHarness(opts?: { interim?: boolean }) {
   const chat: InterimChat = {
     loopPending: null, loopBuffer: [], recallTimers: new Map(),
     recalledInterimIds: new Set(), lastHandledMessageId: undefined,
+    turnFormVoice: false, voiceSentThisTurn: false,
   }
   const assistant = (id: string, ...parts: unknown[]) => ({
     id,

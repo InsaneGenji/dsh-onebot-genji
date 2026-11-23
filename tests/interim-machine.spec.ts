@@ -51,6 +51,8 @@ function makeHarness(opts?: { interim?: boolean; interimRecallMs?: number; inter
     recallTimers: new Map(),
     recalledInterimIds: new Set(),
     lastHandledMessageId: undefined,
+    turnFormVoice: false,
+    voiceSentThisTurn: false,
   }
   const assistant = (text: string, messageOpts?: { toolCall?: boolean; id?: string }) => ({
     id: messageOpts?.id,
@@ -277,5 +279,33 @@ describe('#36 summary-card leakage stripping', () => {
     expect(card).not.toContain('nickname')
     expect(card).not.toContain('帮我看下今天天气')
     expect(card).not.toContain('2.')
+  })
+})
+
+describe('2026-11-23 voice-turn final dedupe', () => {
+  const drive = async (opts: { interim?: boolean; voiceTurn: boolean; voiceSent: boolean }) => {
+    const h = makeHarness({ interim: opts.interim ?? false })
+    h.chat.turnFormVoice = opts.voiceTurn
+    h.chat.voiceSentThisTurn = opts.voiceSent
+    h.tracker.onAssistantMessage('private:10001', h.chat, h.assistant('那就这样') as never)
+    h.tracker.onTurnEnd('private:10001', h.chat)
+    await h.settle()
+    return h.sentTexts
+  }
+
+  it('drops the final text when the turn rolled a voice clip and one was sent (instant mode)', async () => {
+    expect(await drive({ voiceTurn: true, voiceSent: true })).toEqual([])
+  })
+
+  it('drops the final text in interim mode too', async () => {
+    expect(await drive({ interim: true, voiceTurn: true, voiceSent: true })).toEqual([])
+  })
+
+  it('keeps the final text when the voice clip never went out', async () => {
+    expect(await drive({ voiceTurn: true, voiceSent: false })).toEqual(['那就这样'])
+  })
+
+  it('keeps the final text on an ordinary (non-voice) turn', async () => {
+    expect(await drive({ voiceTurn: false, voiceSent: true })).toEqual(['那就这样'])
   })
 })

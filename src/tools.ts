@@ -254,6 +254,8 @@ export function registerTools(
       const messageId = await bridge.sendSegments(chatId, [
         { type: 'record', data: { file: await fencedMediaFile(a.path, limits.maxVoiceBytes, allowedRoots) } },
       ])
+      // 本地加（2026-11-23）：语音条发出去了 → 记一笔，语音条回合的正文不再重复。
+      bridge.noteVoiceSent(chatId)
       return { sent: true, messageId: messageId ?? null }
     },
   }))
