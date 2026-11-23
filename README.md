@@ -1,5 +1,7 @@
 # dsh-onebot-genji
 
+<img src="./docs/social-preview.png" alt="dsh-onebot-genji" width="880">
+
 **把 QQ 接进 DeepSeek Harness。** OneBot 11 通道插件，自带表情包库、主动搭话、语音条和语音转写——装完你的 DSH 智能体就能在 QQ 私聊和群里说话、发表情、发语音、自己找话题。
 
 [![npm](https://img.shields.io/npm/v/dsh-onebot-genji?color=3b82f6&label=npm)](https://www.npmjs.com/package/dsh-onebot-genji)
