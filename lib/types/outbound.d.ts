@@ -170,10 +170,6 @@ export interface OutboundContext {
     isStopping(): boolean;
     /** Bridge log line callback. */
     log(level: 'info' | 'warn' | 'error' | 'debug', message: string): void;
-    /** 本地加（2026-11-23）：正文 `<表情:关键词>` 标签解析——按关键词在「已审核」
-     * 库里挑一张图，返回绝对路径；返回空 = 没匹配上（静默不发）。
-     * 缺席 = 不做标签解析，正文里的标签原样保留（测试装配 / 开关关掉）。 */
-    pickSticker?: (key: string) => Promise<string | null> | string | null;
     /** W1: emit one outbound/queue decision event for a chat. The bridge owns
      * the traceId resolution (chat-level association table; unmapped proactive
      * writes mint a fresh id) — absent = tracing off, zero cost. */

@@ -1088,3 +1088,10 @@ docker restart 会丢登录态（需重新扫码/QCE 登录）
 - **qq_send_text 口径第四次放宽（src/prompt.ts / src/tools.ts）**：从「只有唱歌和画图能用」改成「**要开长活之前真调一次**说一声」——跑构建、跑全量测试、下载大文件、启动游戏或服务、画图、出视频、点歌唱歌，这类要等几十秒以上的活先说一句再动手；关键是**真的要发出去**，只在思考里想「先回用户一句」不算。长活干完写正文汇报，不重复开头那句；短活一律正文。判据：要等就先吱声，说过的别再说第二遍。
 - **气泡条数不封顶（src/outbound.ts）**：带编号列表 `limit = merged.length`，一行一条写多少发多少；普通聊天仍是 `maxBubbles`（默认 4）。
 - **验证**：tsc exit 0；新增 `tests/sticker-tag.spec.ts` 12 例；全量 1171 tests / 1155 passed / 3 skipped / 13 failed（13 个全是 Windows 环境固有：commands×2、media-cleanup×1、media-guard×5、stt-silk×1、tools-gate×4）。真机验过：带 `<表情:得意>` 的正文标签被摘、图发出；写不存在的关键词标签不会漏。
+
+## 2026-11-23 0.17.1：撤掉正文表情包标签
+
+- **为什么撤**：0.17.0 发的 `<表情:关键词>` 标签，在真实使用里根本轮不到——每轮掷骰提示本来就规定「从已审核里挑一张、用 qq_send_image 发」，模型照它执行，标签一次也没触发。主人复看后说「感觉这个和我原来的发表情包方式没啥区别」，当场决定删。
+- **删了什么**：`src/sticker-tag.ts`（整文件，含 `STICKER_TAG_RE` / `extractStickerTags` / `pickStickerByTag`）、`tests/sticker-tag.spec.ts`（12 例）、`OutboundContext.pickSticker`、`sendToChat` 里的标签提取与补图循环、`BridgeDeps.stickerPick` 及 `OutboundPipeline` 的接线、`StickerStore.approvedPathOf`、`src/index.ts` 的动态导入与 `stickerPick` 实现、`src/prompt.ts` 里那条提示词、README 那一行。`src/outbound.ts` 的 `node:fs/promises` 导入回到 `{ appendFile, mkdir }`。
+- **留下的**：气泡条数不封顶、qq_send_text 口径放宽（这两笔本来就跟标签无关）。
+- **验证**：tsc exit 0；全量 1159 tests / 1143 passed / 3 skipped / 13 failed（13 个仍是 Windows 环境固有的 commands×2、media-cleanup×1、media-guard×5、stt-silk×1、tools-gate×4）。

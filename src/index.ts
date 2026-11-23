@@ -53,7 +53,6 @@ let ProactiveTalk: typeof import('./proactive.js').ProactiveTalk
 let QzonePost: typeof import('./qzone.js').QzonePost
 let StickerStore: typeof import('./stickers.js').StickerStore
 let DEFAULT_STICKER_ROOT: string
-let pickStickerByTag: typeof import('./sticker-tag.js').pickStickerByTag
 
 try {
   ;({ default: z } = await import('@deepseek-ai/schemastery'))
@@ -70,7 +69,6 @@ try {
   ;({ ProactiveTalk } = await import('./proactive.js'))
   ;({ QzonePost } = await import('./qzone.js'))
   ;({ StickerStore, DEFAULT_STICKER_ROOT } = await import('./stickers.js'))
-  ;({ pickStickerByTag } = await import('./sticker-tag.js'))
   ;({ resolveUserQuestions } = await import('./ask-tool.js'))
 } catch (error) {
   console.error('[dsh-onebot] 挂载失败：peer 依赖解析失败或关键模块缺失 —— 部署副本必须带完整 node_modules 链接集（scripts/link-host.sh 产物），只复制 lib/ 不够。原始错误：' + (error instanceof Error ? error.message : String(error)))
@@ -820,21 +818,6 @@ export function apply(ctx: Context, config: Config): void {
           log('warn', '[stickers] 即时收集失败: ' + describeError(error))
         }
       },
-    // 2026-11-23 本地加：正文 `<表情:关键词>` 标签 → 已审核库里的一张图。
-    // 不设开关：匹配不上就静默跳过（没写等于没写），不会有副作用；
-    // 每次现读索引，跟面板刷新同一口径。
-    stickerPick: (key: string): string | null => {
-      try {
-        const store = stickerStoreOf()
-        const items = store.list()
-        const file = pickStickerByTag(items, key, f => store.approvedPathOf(f))
-        if (file === null) log('debug', '[stickers] 表情包标签没匹配上: ' + key)
-        return file
-      } catch (error) {
-        log('warn', '[stickers] 表情包标签解析失败: ' + describeError(error))
-        return null
-      }
-    },
     agents: ctx.agents,
     sessions: ctx.sessions,
     agentPresets: ctx.agentPresets,
