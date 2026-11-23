@@ -1,26 +1,32 @@
 # dsh-onebot-genji
 
-把 QQ 接入 DeepSeek Harness 的通道插件（OneBot 11），从 `dsh-onebot-qq@0.11.0` 分叉而来。
+**把 QQ 接进 DeepSeek Harness。** OneBot 11 通道插件，自带表情包库、主动搭话、语音条和语音转写——装完你的 DSH 智能体就能在 QQ 私聊和群里说话、发表情、发语音、自己找话题。
 
-本分叉由 **InsaneGenji** 维护，在上游基础上加自己需要的东西；想装上游原版请去 https://github.com/mario841859784/dsh-onebot ，上游完整文档见 [`README.upstream.md`](./README.upstream.md)。
+[![npm](https://img.shields.io/npm/v/dsh-onebot-genji?color=3b82f6&label=npm)](https://www.npmjs.com/package/dsh-onebot-genji)
+[![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](./LICENSE)
+[![dsh](https://img.shields.io/badge/dsh-0.1.5%20~%200.2.2-8b5cf6)](https://www.npmjs.com/package/dsh-onebot-genji)
 
-## 安装与配置
+```sh
+dsh plugin --profile web add dsh-onebot-genji
+```
 
-与原版完全一致，见 [`README.upstream.md`](./README.upstream.md)。
+配好 NapCat 或任意 OneBot 11 实现，就能用了。上游原版是 [dsh-onebot](https://github.com/mario841859784/dsh-onebot)；本仓库是 **InsaneGenji** 维护的分叉，在上面加了自己每天在用的一批功能。
+
+---
 
 ## 和原版（dsh-onebot-qq）的区别
-
-只列本分叉**新加**的功能；安装、配置、连接 NapCat 的方式跟原版完全一致，见 [`README.upstream.md`](./README.upstream.md)。
 
 | 功能 | 说明 |
 | --- | --- |
 | **表情包库** | 一套完整的表情包管理：新图自动收进「未审核」，审核时才让模型看图写描述和标签，不点不跑、不占显存；已审核的图可一键「重新识别」重跑识别，描述和标签点一下就能改 |
-| **主动搭话** | 内置在插件里（`lib/proactive.js`），按空闲时长、间隔、每日上限、安静时段自己找话题，聊完还能补一句；开关和阈值全在设置页「行为 → 私聊」，生成走当前会话模型 |
+| **主动搭话** | 内置在插件里（`lib/proactive.js`），按空闲时长、间隔、每日上限、安静时段自己找话题；开关和阈值全在设置页「行为 → 私聊」，生成走当前会话模型 |
 | **回合形式掷骰** | 每个回合按概率决定这一轮用文字、语音条还是表情包；语音/表情的开关与概率都是设置项（默认 10% / 39%） |
-| **气泡切分与双发闸** | 正文按换行 / 句末标点自动切成最多 4 条气泡，条与条之间 0.8–1.5 秒随机停顿；`qq_send_text` 这一轮发过话，回合末正文就不再发（要补内容就再调一次工具，别指望正文兜底） |
-| **群聊上下文** | 被 @ 或叫到唤醒词时，自动带上群里最近 N 条消息（「参考上下文条数」，默认 3，0 = 不带），被门控挡下的消息不会丢 |
+| **气泡切分** | 正文按换行 / 句末标点自动切成多条气泡，条与条之间按字数算随机停顿（0.4–2.2 秒）；编号列表一行一条，不被切碎 |
 | **自带语音转写桥** | `lib/stt_cli.py` 打进包里，`sttEngine: auto` 探不到 whisper 时自动用它（只要 Python + `faster-whisper`），不用自己配脚本 |
-| **设置页重做** | 中文标签 + 分组分区（连接 / 权限 / 行为 / 表情包 / 会话 / 媒体 / 诊断），数字项统一「≥0 的整数」校验，用不到的项（旁观、强制会话 ID、新会话智能体预设等）已隐藏 |
+| **群聊上下文** | 被 @ 或叫到唤醒词时，自动带上群里最近 N 条消息（「参考上下文条数」，默认 3，0 = 不带），被门控挡下的消息不会丢 |
+| **设置页重做** | 中文标签 + 分组分区（连接 / 权限 / 行为 / 表情包 / 会话 / 媒体 / 诊断），数字项统一「≥0 的整数」校验，用不到的项已隐藏 |
+
+安装、配置、连接 NapCat 的方式跟原版一致，完整文档见 [`README.upstream.md`](./README.upstream.md)（英文版 [`README.en.md`](./README.en.md)）。
 
 ## 表情包管理
 
@@ -62,6 +68,8 @@ PATH 上既没有 whisper 可执行文件、也没有可用的 Python 时，语�
 pnpm build      # ./scripts/build.sh
 pnpm test       # vitest
 ```
+
+> `scripts/build.sh` 是 bash 脚本。Windows 上直接调 `node_modules/typescript/bin/tsc -p tsconfig.json` 等价。
 
 改到设置面板（`src/client.ts`）时另外跑一遍 `startup\settings-*.mjs` 那组校验脚本。
 
