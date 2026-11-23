@@ -131,6 +131,19 @@ export declare class StickerStore {
     private index;
     constructor({ root, log }: StickerStoreOptions);
     ensure(): void;
+    /**
+     * 2026-11-23 主人报的 bug：新图已经落到「未审核」、索引也写了，面板点「刷新」
+     * 还是只显示 2 张。
+     *
+     * 根因：面板走 settings-remote 里的 `storeOf()`，那个 StickerStore 实例被缓存了
+     * （root 不变就一直复用），`ensure()` 只在构造时读过一次 index.json。自动收集跑在
+     * 插件主实例里、写的是磁盘，面板这位手里还是启动时那份内存快照，`list()` /
+     * `stats()` 全从内存出 —— 所以刷新按钮拉到的还是旧数据。
+     *
+     * 修法：刷新时强制从磁盘重读一遍索引。读失败保持原内存不动（不让一次坏 JSON
+     * 把面板清空）。
+     */
+    reload(): void;
     /** 让 index 一定带 deleted 墓碑数组（老索引读进来时补上）。 */
     normalize(): void;
     /** 清空墓碑（清完之后，以前删过的图有可能又被自动收集回来）。 */

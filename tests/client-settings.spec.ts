@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 客户端设置页 UI bundle 测试（T8 · 贡献者 0.9.19 版重写；0.10.0 视觉对齐更新）。
  *
  * 验证 src/client.ts（构建产物 lib/client.js，CJS 包裹挂 window.__ModuleLoader__）
@@ -232,7 +232,7 @@ describe('T8 客户端 bundle — descriptor 契约核对（与宿主 src/settin
     expect(parsed.config.reactionOnMention).toBe(false)
     expect(parsed.config.reactionEmoji).toBe(178)
     expect(parsed.config.allowAllUsers).toBe(false) // 面板下架但 schema/codec 仍保留（老配置可读）
-    expect(Object.keys(parsed.config)).toHaveLength(91) // 90 ALL_KEYS 配置键 + notices（旁观 5 键 2026-11-20 已删；补话 5 键 2026-11-22 已删）
+    expect(Object.keys(parsed.config)).toHaveLength(97) // 90 ALL_KEYS 配置键 + notices（旁观 5 键 2026-11-20 已删；补话 5 键 2026-11-22 已删）
     expect(parsed.config.notices).toEqual(SCHEMA_DEFAULTS.notices)
   })
 
@@ -289,6 +289,7 @@ describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已
       'proactiveBurstProb',
     ],
     stickers: ['stickerAutoCollect', 'stickerRoot'],
+    qzone: ['qzoneEnabled', 'qzoneVisibility', 'qzoneMaxPerDay', 'qzoneMinGapMinutes', 'qzoneQuietFrom', 'qzoneQuietTo'],
     session: [
       'titleSyncEnabled', 'startupResumeEnabled', 'newSessionGreeting', 'memoryFilesEnabled', 'memoryFiles',
       'workspacePath', 'dmPromptFile', 'groupWorkspacePath', 'groupPromptFile',
@@ -303,10 +304,10 @@ describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已
 
   it('分组键序逐字对齐面板口径（7 组 77 键，含 T6/T7 转正键、T24 titleSyncEnabled、#61 建议 2 startupResumeEnabled、11.19 掷骰四键/表情包组/主动搭话 9 键、11.22 删补话五键）', () => {
     expect(client.GROUP_KEYS).toStrictEqual(PANEL_GROUPS)
-    expect(groups.map((group) => group.id)).toEqual(['connection', 'permissions', 'behavior', 'stickers', 'session', 'media', 'diagnostics'])
-    expect(allFields).toHaveLength(77)
+    expect(groups.map((group) => group.id)).toEqual(['connection', 'permissions', 'behavior', 'stickers', 'qzone', 'session', 'media', 'diagnostics'])
+    expect(allFields).toHaveLength(83)
     const clientKeys = allFields.map((field) => field.key)
-    expect(new Set(clientKeys).size).toBe(77) // 无重复
+    expect(new Set(clientKeys).size).toBe(83) // 无重复
     for (const key of clientKeys) expect([...ALL_KEYS]).toContain(key) // 无孤儿键
     // 面板键 ⊂ host SETTINGS_GROUPS（host 侧仍保留下架键，面板只是不再渲染）
     const hostKeys = Object.values(SETTINGS_GROUPS).flat()
@@ -373,7 +374,7 @@ describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已
 
   it('默认值逐字对齐 host SCHEMA_DEFAULTS（88 键：77 面板键 + 下架键 + chatIdleEvictDays；notices 走面板 5 真键不在 DEFAULTS）', () => {
     const hostDefaults = SCHEMA_DEFAULTS as Record<string, unknown>
-    expect(Object.keys(defaults)).toHaveLength(88) // 含下架键与 chatIdleEvictDays（旁观 5 键 2026-11-20 已删；补话 5 键 2026-11-22 已删）
+    expect(Object.keys(defaults)).toHaveLength(94) // 含下架键与 chatIdleEvictDays（旁观 5 键 2026-11-20 已删；补话 5 键 2026-11-22 已删）
     expect('notices' in defaults).toBe(false) // notices 由 NOTICE_KEYS 面板通道承载
     expect(defaults.chatIdleEvictDays).toBe(hostDefaults.chatIdleEvictDays) // 不上面板但参与徽标对照
     expect(defaults.sidebarEntryEnabled).toBe(true) // T11：侧边栏入口默认开（设置项已下架，行为恒开）
@@ -399,7 +400,7 @@ describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已
       else expect(field.type === 'string' || field.type === 'secret').toBe(true)
     }
     const enumField = (key: string) => groups.flatMap((group) => group.fields).find((field) => field.key === key)
-    expect(allFields.filter((field) => field.type === 'enum')).toHaveLength(9)
+    expect(allFields.filter((field) => field.type === 'enum')).toHaveLength(10)
     expect(enumField('mode')?.options).toEqual(['reverse', 'forward'])
     expect(enumField('dmPolicy')?.options).toEqual(['open', 'allowlist', 'disabled'])
     expect(enumField('groupPolicy')?.options).toEqual(['open', 'allowlist', 'disabled'])
@@ -413,7 +414,7 @@ describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已
   })
 
   it('分组标题与字段 label 为中文（T8 要求：贡献者口语短文案 × 中文）', () => {
-    expect(groups.map((group) => group.title)).toEqual(['连接', '权限', '行为', '表情包', '会话', '媒体', '诊断'])
+    expect(groups.map((group) => group.title)).toEqual(['连接', '权限', '行为', '表情包', 'QQ空间', '会话', '媒体', '诊断'])
     for (const field of allFields) expect(field.label).toMatch(/\p{Script=Han}/u)
   })
 
@@ -534,20 +535,21 @@ describe('T8 showIf 条件显隐 — 贡献者面板交互契约', () => {
     expect(visibleLabels('session', { memoryFilesEnabled: true })).toContain('记忆文件路径')
   })
 
-  it('渲染行计数与 showIf 自洽：默认草稿顶层字段行 77 行 = 可见 62 键 + 15 通知行（5 开关 + 5 文案 + 5 主动搭话 followup）；隐藏 11 键', () => {
+  it('渲染行计数与 showIf 自洽：默认草稿顶层字段行 77 行 = 可见 67 键 + 通知行；隐藏 16 键（默认 qzoneEnabled=false，qzone 五键全隐）', () => {
     const visible = (field: { showIf?: { key: string; value: unknown } }) => !field.showIf || baseDraft()[field.showIf.key] === field.showIf.value
     const hiddenKeys = allFields.filter((field) => !visible(field)).map((field) => field.key)
-    expect(allFields.filter(visible)).toHaveLength(66)
+    expect(allFields.filter(visible)).toHaveLength(67)
     expect(hiddenKeys).toEqual([
       'host', 'port', 'allowFrom', 'groupAllowFrom', 'inboxQueueDelayMs', 'interimRecallMs',
+      'qzoneVisibility', 'qzoneMaxPerDay', 'qzoneMinGapMinutes', 'qzoneQuietFrom', 'qzoneQuietTo',
       'memoryFiles', 'sttCommand', 'sttArgs', 'sttModel', 'textImageThreshold',
     ])
     const rowsPerGroup = groups.map((group) => topFieldRows(renderGroup(group.id, {})).length)
     // connection 4（6-2 隐藏）/ permissions 10（12-2 隐藏）/ behavior 32（13 可见字段 + 4 通知段字段
     // + 10 通知行 + 5 主动搭话多行文案由 fold 展开后计入；2026-11-22 删补话四行 37→32）/ stickers 2 / session 8（9-1 隐藏）
     // media 13（17-4 隐藏）/ diagnostics 7（旁观组已整组下架，不再计行）
-    expect(rowsPerGroup).toEqual([4, 10, 32, 2, 8, 13, 7])
-    expect(rowsPerGroup.reduce((sum, count) => sum + count, 0)).toBe(76)
+    expect(rowsPerGroup).toEqual([4, 10, 32, 2, 1, 8, 13, 7])
+    expect(rowsPerGroup.reduce((sum, count) => sum + count, 0)).toBe(77)
   })
 
   it('2026-11-22 行位调整：deferredTimeoutMs 紧跟「超时补发提示」文案行；sendErrorNotice 夹在「限流提示」和「私聊」之间', () => {
@@ -580,14 +582,14 @@ describe('T8 showIf 条件显隐 — 贡献者面板交互契约', () => {
 describe('T8 客户端 bundle — 渲染函数模块级可测（renderGroup 纯函数，ui 桩注入）', () => {
   it('七组各产出标题与逐字段控件行；控件类型齐备（9 分段 + 11 多行文本 + 30 开关 + 25 文本输入 + 1 密码框 + 1 清除勾选）', () => {
     const sections = groups.map((group) => renderGroup(group.id, {}))
-    expect(sections.map((section) => section.props['data-group'])).toEqual(['connection', 'permissions', 'behavior', 'stickers', 'session', 'media', 'diagnostics'])
+    expect(sections.map((section) => section.props['data-group'])).toEqual(['connection', 'permissions', 'behavior', 'stickers', 'qzone', 'session', 'media', 'diagnostics'])
     const elements = sections.flatMap((section) => walk(section))
-    expect(elements.filter((element) => element.type === stubUi.SegmentedControl)).toHaveLength(9) // 9 枚举全显（原生分段控件；faceStyle 已下架）
+    expect(elements.filter((element) => element.type === stubUi.SegmentedControl)).toHaveLength(9) // 默认 qzoneEnabled=false 时 qzoneVisibility 隐藏，9 枚举中 8 显 + …
     expect(elements.filter((element) => element.type === 'textarea')).toHaveLength(11) // 4 可见 stringArray（含 proactiveTargetUsers）+ 5 通知文案 + 2 主动搭话多行文案
     const inputs = elements.filter((element) => element.type === stubUi.Input)
-    expect(inputs.filter((input) => input.props.type === 'text')).toHaveLength(25) // 18 可见 number + 7 可见 string（forward 档 url 显、host/port 隐；2026-11-22 删补话四行 29→25）
+    expect(inputs.filter((input) => input.props.type === 'text')).toHaveLength(25) // 14 可见 number + 7 可见 string（forward 档 url 显、host/port 隐；默认 qzoneEnabled=false 时 4 个 qzone 数字键也隐）
     expect(inputs.filter((input) => input.props.type === 'password')).toHaveLength(1)
-    expect(elements.filter((element) => element.type === stubUi.Switch)).toHaveLength(30) // 25 布尔面板键 + 5 通知开关（恒显；2026-11-22 删 proactiveFollowupEnabled 31→30）
+    expect(elements.filter((element) => element.type === stubUi.Switch)).toHaveLength(31) // 25 布尔面板键 + 5 通知开关（恒显；2026-11-22 删 proactiveFollowupEnabled 31→30）
     expect(elements.filter((element) => element.type === stubUi.Checkbox)).toHaveLength(1) // 仅 secret 清除勾选
     expect(elements.filter((element) => element.type === 'input')).toHaveLength(0) // 控件全走 ui 桩；原始 input 不再出现
   })
@@ -791,11 +793,15 @@ describe('T8 数字行内校验 — NUMBER_RANGE 对齐 host + numberRangeInvali
       proactiveQuietTo: [0, 23],
       proactiveAttemptGapMinutes: [0, 1440],
       proactiveBurstProb: [0, 1],
+      qzoneMaxPerDay: [0, 20],
+      qzoneMinGapMinutes: [0, 1440],
+      qzoneQuietFrom: [0, 23],
+      qzoneQuietTo: [0, 23],
     })
     // 键集 = 面板 21 个 number 字段（2026-11-20：「旁观」整组连同 3 个数字键一起删了，
     // 2026-11-22：补话四键删了 25→21；reactionEmoji/chatIdleEvictDays 不上面板也不入表）
     const panelNumberKeys = allFields.filter((field) => field.type === 'number').map((field) => field.key)
-    expect(panelNumberKeys).toHaveLength(21)
+    expect(panelNumberKeys).toHaveLength(25) // 2026-11-23：+4 个 qzone 数字键
     expect([...Object.keys(NUMBER_RANGE)].sort()).toEqual([...panelNumberKeys].sort())
     expect(CLIENT_SOURCE).toContain('src/settings-remote.ts')
   })
@@ -875,7 +881,7 @@ describe('T8 冲突合并 — mergeOnConflict（远端未变保留草稿、远�
     expect(merged.keptCount).toBe(1)
     expect(merged.draft.port).toBe('3000')
     expect(merged.draft.botQQ).toBe('10086')
-    expect(Object.keys(merged.draft)).toHaveLength(77)
+    expect(Object.keys(merged.draft)).toHaveLength(83)
     expect((client.computeDirtyKeys as Function)(merged.draft, next)).toEqual(['botQQ'])
   })
 
@@ -1071,7 +1077,7 @@ describe('0.10.0 字段文案词典化 — 新键必须双词（zh 自动灌入 
   it('渲染走词条：renderGroup/picker 以 t 解析（桩 = LOCALE_ZH），zh 视觉与迁移前逐字一致', () => {
     const rendered = JSON.stringify(walk(renderGroup('connection', { nonDefaultKeys: ['mode'] })))
     expect(rendered).toContain('正向 WS 服务器地址') // label 经词典解析
-    expect(rendered).toContain('反向=它连我，正向=我连它') // hint 经词典解析
+    expect(rendered).toContain('反向 = 它连我，正向 = 我连它') // hint 经词典解析
     expect(rendered).toContain('非默认') // W6 徽标经词典解析
     expect(rendered).toContain('与默认值不同') // 徽标 title 经词典解析
     // picker 词条由 renderExtraRow 注入（面板层），此处不覆盖——picker 专测见 fillWorkspacePath 组

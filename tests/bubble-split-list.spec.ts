@@ -57,3 +57,33 @@ describe('气泡切分：编号列表', () => {
     expect(splitIntoBubbles(lines.join('\n')).length).toBeLessThanOrEqual(4)
   })
 })
+
+describe('列表里说明行多于编号项（2026-11-23 主人抓到的挤压 bug）', () => {
+  it('两句说明 + 4 个编号 + 一句收尾 = 7 行，必须出 7 条', () => {
+    const text = [
+      '判据已经写进两个地方了',
+      'src/prompt.ts 起原来只有一行，现在拆成四条：',
+      '1. 正常聊天不调工具，写正文',
+      '2. 唯一合格用法是要等几十秒的活',
+      '3. 以下情况一律写正文',
+      '4. 判据一句话：要等才算长活',
+      '两处都只改文字，没加代码闸',
+    ].join('\n')
+    const out = splitIntoBubbles(text)
+    expect(out).toHaveLength(7)
+    expect(out[2].startsWith('1.')).toBe(true)
+    expect(out[5].startsWith('4.')).toBe(true)
+    // 收尾句不许被 join 到第 4 条后面
+    expect(out[6]).not.toContain('4.')
+  })
+
+  it('带编号时**不封顶**，10 条就出 11 条（2026-11-23 晚主人第二次要求）', () => {
+    const text = [
+      '开头一句说明',
+      ...Array.from({ length: 10 }, (_, i) => `${i + 1}. 第${i + 1}条：一些足够长的说明文字，保证不会被短句合并规则吸走`),
+    ].join('\n')
+    const out = splitIntoBubbles(text)
+    expect(out).toHaveLength(11)
+    expect(out[10].startsWith('10.')).toBe(true)
+  })
+})

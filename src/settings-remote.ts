@@ -95,6 +95,8 @@ export const SETTINGS_GROUPS: Readonly<Record<string, readonly string[]>> = {
     'proactiveBurstProb'],
   // 2026-11-19（本地加）：表情包库（列表/新增/删除/审核走远程方法，不占键表）。
   stickers: ['stickerAutoCollect', 'stickerRoot'],
+  // 2026-11-23（本地加）：QQ 空间说说六键（独立面板页签，排在「表情包」之后）。
+  qzone: ['qzoneEnabled', 'qzoneVisibility', 'qzoneMaxPerDay', 'qzoneMinGapMinutes', 'qzoneQuietFrom', 'qzoneQuietTo'],
   // #58 群聊旁观：默认全关/空（enabled=false 时其余四键零行为）。
   session: ['titleSyncEnabled', 'startupResumeEnabled', 'newSessionGreeting', 'memoryFilesEnabled', 'memoryFiles', 'agentPreset', 'workspacePath', 'groupWorkspacePath', 'forceSessionId', 'dmPromptFile', 'groupPromptFile'],
   media: ['sttEnabled', 'sttEngine', 'sttCommand', 'sttArgs', 'sttModel', 'textImageEnabled', 'textImageThreshold', 'cardFooter', 'fontFiles', 'fontFamilies', 'outboundImageMaxBytes', 'maxVoiceBytes', 'maxFileBytes', 'inboundImageMaxPx', 'inboundFileMaxBytes', 'gifFramesEnabled', 'allowPrivateHosts'],
@@ -144,6 +146,13 @@ export const SCHEMA_DEFAULTS: Readonly<Record<string, unknown>> = {
   proactiveQuietTo: 6,
   proactiveAttemptGapMinutes: 30,
   proactiveBurstProb: 0.5,
+  // 2026-11-23（本地加）：QQ 空间说说默认值，与 src/qzone.ts 的 QZONE_DEFAULTS 一致。
+  qzoneEnabled: false,
+  qzoneMaxPerDay: 3,
+  qzoneMinGapMinutes: 240,
+  qzoneQuietFrom: 22,
+  qzoneQuietTo: 6,
+  qzoneVisibility: 'public',
   // T5 翻转：下载 SSRF 防护逃生门（原 false）。
   allowPrivateHosts: true,
   ignoreSelf: true,
@@ -293,10 +302,13 @@ const ENUM_KEYS: Readonly<Record<string, readonly string[]>> = {
   faceStyle: ['name', 'emoji'],
   logLevel: ['debug', 'info', 'warn', 'error'],
   sttEngine: ['auto', 'openai', 'whisper-cpp', 'custom'],
+  // 2026-11-23（本地加）：QQ 空间说说的可见范围。
+  qzoneVisibility: ['public', 'friends', 'private'],
 }
 const NUMBER_KEYS: readonly string[] = ['port', 'interimRecallMs', 'rateLimitPerMinute', 'deferredTimeoutMs', 'textImageThreshold', 'chatIdleEvictDays', 'outboundImageMaxBytes', 'maxVoiceBytes', 'maxFileBytes', 'inboundImageMaxPx', 'inboundFileMaxBytes', 'inboxQueueDelayMs', 'groupContextLines', 'voiceReplyProb', 'stickerReplyProb',
   'proactiveMinIdleMinutes', 'proactiveMinGapMinutes', 'proactiveMaxPerDay', 'proactiveQuietFrom', 'proactiveQuietTo',
-  'proactiveAttemptGapMinutes', 'proactiveBurstProb', 'reactionEmoji']
+  'proactiveAttemptGapMinutes', 'proactiveBurstProb', 'reactionEmoji',
+  'qzoneMaxPerDay', 'qzoneMinGapMinutes', 'qzoneQuietFrom', 'qzoneQuietTo']
 /** 数字键取值范围（评审 B4：port 1–65535、时长/频控 ≥0；越界在 Remote 层拒绝，不再只依赖宿主回滚兜底）。 */
 const NUMBER_RANGE: Readonly<Record<string, readonly [number, number | undefined]>> = {
   port: [1, 65535],
@@ -324,6 +336,11 @@ const NUMBER_RANGE: Readonly<Record<string, readonly [number, number | undefined
   proactiveQuietTo: [0, 23],
   proactiveAttemptGapMinutes: [0, 1440],
   proactiveBurstProb: [0, 1],
+  // 2026-11-23（本地加）：QQ 空间说说门槛。
+  qzoneMaxPerDay: [0, 20],
+  qzoneMinGapMinutes: [0, 1440],
+  qzoneQuietFrom: [0, 23],
+  qzoneQuietTo: [0, 23],
   // 群聊 @ 表情回执：表情 ID（非负整数）。
   reactionEmoji: [0, undefined],
 }
@@ -339,6 +356,8 @@ const BOOLEAN_KEYS: readonly string[] = [
   'sidebarEntryEnabled', 'titleSyncEnabled', 'startupResumeEnabled',
   // 2026-11-19（本地加）：回合形式掷骰开关、表情包自动收集、主动搭话开关。
   'voiceReplyEnabled', 'stickerReplyEnabled', 'stickerAutoCollect', 'proactiveEnabled',
+  // 2026-11-23（本地加）：QQ 空间说说开关。
+  'qzoneEnabled',
 ]
 const STRING_KEYS: readonly string[] = ['host', 'url', 'accessToken', 'botQQ', 'workspacePath', 'groupWorkspacePath', 'forceSessionId', 'dmPromptFile', 'groupPromptFile', 'cardFooter', 'agentPreset', 'sttCommand', 'sttModel', 'stickerRoot']
 const STRING_ARRAY_KEYS: readonly string[] = ['adminUsers', 'allowFrom', 'groupAllowFrom', 'wakeNamesAdmin', 'wakeNamesMember', 'memoryFiles', 'sensitivePatterns', 'sttArgs', 'fontFiles', 'fontFamilies', 'proactiveTargetUsers']
@@ -845,6 +864,14 @@ export function createStickerMethods(editor: ConfigEditorLike, ctx: unknown): St
       // 2026-11-19：先把「索引里有、磁盘上没了」的条目摘掉，面板就不会再出裂图。
       return trace('listStickers', async () => {
         const store = storeOf()
+        // 2026-11-23 主人报的 bug：新图进了「未审核」，点刷新面板还是旧数字。
+        // 这个 store 实例被缓存复用，内存里是启动时的快照；刷新前先从磁盘重读。
+        try {
+          store.reload()
+        }
+        catch (error) {
+          diag('listStickers reload 失败 ' + errorStackOrMessage(error))
+        }
         let gone: string[] = []
         try {
           gone = store.pruneMissing()

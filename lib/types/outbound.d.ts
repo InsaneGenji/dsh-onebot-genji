@@ -95,23 +95,6 @@ export declare const BUBBLE_GAP_MAX_MS = 2200;
  * 首条不等待，所以这里只被第 2 条及以后调用。
  */
 export declare function bubbleGapMs(prevText?: string, random?: () => number): number;
-/**
- * 双发闸（语义版，2026-11-19 主人要回）：判断「回合末正文」是不是把工具
- * （qq_send_text / 图片配文那种）刚说过的话又重复了一遍。纯文本启发式，
- * 不调模型：先归一化（去掉空白、标点、符号、emoji、括号里的颜文字），
- * 再比二元组 Dice 系数。长度差超过一倍直接判不重复（一句是新内容）。
- */
-export declare function textTopicKey(text: string): string;
-/** 二元组 Dice 系数（0–1）：1 = 归一化后一模一样。 */
-export declare function topicSimilarity(a: string, b: string): number;
-/** 判重阈值：0.72 能把「我先去跑，几十秒」/「我去跑，几十秒」判成同一句，
- * 又能放过「来了」+「来了，我这就去扒谱」这种后半句有新信息的。 */
-export declare const DUPLICATE_TOPIC_THRESHOLD = 0.72;
-/** 语义判重：归一化后同串直接算重复，否则二元组 Dice ≥ 阈值算重复。 */
-export declare function isDuplicateTopic(a: string, b: string, threshold?: number): boolean;
-/** 双发闸已于 2026-11-22 整套删除（主人定：正常聊天不调 qq_send_text，只在开长活时
- * 先用它吱一声，两边不会再撞）。这里原先的 `dedupeToolEcho`（工具说过话 → 回合末
- * 正文整条不写）随之删除；下面的相似度工具函数保留，供别处按需复用。 */
 /** Options for an explicit outbound send (from tools). */
 export interface SendOptions {
     replyTo?: string;

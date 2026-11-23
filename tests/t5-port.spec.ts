@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+﻿import { describe, expect, it } from 'vitest'
 import { Config } from '../src/index.js'
 import {
   ALL_KEYS, NOTICE_KEYS, PENDING_SCHEMA_KEYS, SCHEMA_DEFAULTS, SETTINGS_GROUPS, validatePatch,
@@ -39,18 +39,19 @@ describe('T5 键表完整性（SCHEMA_DEFAULTS 与 schema 无孤儿键）', () =
   const groupKeys = Object.values(SETTINGS_GROUPS).flat()
 
   it('七组结构（T8/T11/T24 增键 + 0.10.0 重排方案 A + #59 memberTools + T1 reaction + 11.18 allowAllUsers/旁观组下架 + 11.19 掷骰/表情包/主动搭话 + 11.22 删补话五键）：connection 6 / permissions 18 / behavior 27 / stickers 2 / session 11 / media 17 / diagnostics 7', () => {
-    expect(Object.keys(SETTINGS_GROUPS)).toEqual(['connection', 'permissions', 'behavior', 'stickers', 'session', 'media', 'diagnostics'])
+    expect(Object.keys(SETTINGS_GROUPS)).toEqual(['connection', 'permissions', 'behavior', 'stickers', 'qzone', 'session', 'media', 'diagnostics'])
     expect(SETTINGS_GROUPS.connection).toHaveLength(6) // 0.10.0 重排：连接=通道配置（-8 键）
     expect(SETTINGS_GROUPS.permissions).toHaveLength(18) // 本地加：+groupContextLines // #59：+memberTools；T1 reaction：+reactionOnMention/reactionEmoji；2026-11-18：allowAllUsers 从面板摘掉 -1
     // 2026-11-19 本地加 18 键：voiceReplyEnabled/voiceReplyProb/stickerReplyEnabled/stickerReplyProb
     //（紧跟 rateLimitPerMinute）+ 14 个扁平 proactiveXxx（组尾）；2026-11-22 删掉补话五键，
     //  组尾只剩 9 个 proactiveXxx → 32→27。
-    expect(SETTINGS_GROUPS.behavior).toHaveLength(27)
+    expect(SETTINGS_GROUPS.behavior).toHaveLength(27) // 2026-11-23：qzone 六键独立成组，behavior 回到 27
     // 2026-11-18：「旁观」整组退出组表；2026-11-20：整套删除（schema/ALL_KEYS/DEFAULTS 里也没了）
     expect(SETTINGS_GROUPS).not.toHaveProperty('bystander')
     expect(SETTINGS_GROUPS.behavior).toEqual(expect.arrayContaining(['inboxQueueEnabled', 'inboxQueueDelayMs', 'titleSyncEnabled']))
     // 2026-11-19：表情包库单独成组（列表/审核走 remote 方法，只有两个面板键）。
     expect(SETTINGS_GROUPS.stickers).toEqual(['stickerAutoCollect', 'stickerRoot'])
+ expect(SETTINGS_GROUPS.qzone).toEqual(['qzoneEnabled', 'qzoneVisibility', 'qzoneMaxPerDay', 'qzoneMinGapMinutes', 'qzoneQuietFrom', 'qzoneQuietTo'])
     expect(SETTINGS_GROUPS.session).toHaveLength(11) // 0.10.0：5→10（+工作区×2/强制会话/提示词文件×2）；#61 建议 2：10→11（+startupResumeEnabled）
     expect(SETTINGS_GROUPS.media).toHaveLength(17) // T6：+gifFramesEnabled；0.10.0：+allowPrivateHosts
     expect(SETTINGS_GROUPS.media).toContain('gifFramesEnabled')

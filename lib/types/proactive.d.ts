@@ -91,6 +91,10 @@ export interface ProactiveTailsLike {
  *  sendToChat，尾巴用下面的 bridgeTails() 按名字取（运行时行为不变）。 */
 export interface ProactiveBridgeLike {
     sendToChat: (chatId: string, text: string) => unknown;
+    /** 本地加 2026-11-23：把主动发出去的原话登记给 bridge，下一回合主人回话时
+     *  作为上下文前缀带上——否则模型不知道自己在接什么（主报告：「像你自己忘了
+     *  自己主动发的消息」）。宿主没提供就静默跳过。 */
+    noteProactiveSaid?: (chatId: string, text: string) => void;
 }
 /** 宿主模型调用通道（index.ts 注入；返回值当纯文本用）。 */
 export type ProactiveGenerateText = (prompt: string, options: {

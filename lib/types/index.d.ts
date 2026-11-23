@@ -217,6 +217,14 @@ export interface Config {
         attemptGapMinutes: number;
         burstProb: number;
     };
+    /** QQ 空间说说（本地加 2026-11-23）：定时／按条件自己发一条说说。
+     *  键名扁平 qzoneXxx（不走嵌套，省得再写一层折叠），见 src/qzone.ts。 */
+    qzoneEnabled: boolean;
+    qzoneMaxPerDay: number;
+    qzoneMinGapMinutes: number;
+    qzoneQuietFrom: number;
+    qzoneQuietTo: number;
+    qzoneVisibility: 'public' | 'friends' | 'private';
     /** Per-chat per-minute sliding-window cap for normal (non-command) messages; 0 disables. */
     rateLimitPerMinute: number;
     restrictedMemberPrefix: boolean;

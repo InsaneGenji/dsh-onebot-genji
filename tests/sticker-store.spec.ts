@@ -133,3 +133,37 @@ describe('StickerStore 墓碑（删过的图别再收回来）', () => {
     expect(onDisk.deleted ?? []).not.toContain(hash)
   })
 })
+
+describe('StickerStore.reload（2026-11-23 面板刷新不更新）', () => {
+  it('别的实例往磁盘写了新条目，reload 之后 list() 能看到', () => {
+    const { root, store } = seededStore()
+    const before = store.list().length
+    // 另一个实例（插件主实例/自动收集）写盘
+    const writer = new StickerStore({ root })
+    const pendingDir = writer.pendingDir
+    mkdirSync(pendingDir, { recursive: true })
+    writeFileSync(join(pendingDir, 'fresh.png'), PNG_BYTES)
+    const data = JSON.parse(readFileSync(writer.indexFile, 'utf8')) as { items: Record<string, unknown>, deleted: string[] }
+    data.items.fresh333 = { hash: 'fresh333', file: 'fresh.png', approved: false, tags: [], description: '', bytes: PNG_BYTES.length, addedAt: 3 }
+    writeFileSync(writer.indexFile, JSON.stringify(data, null, 2))
+    // 没 reload 时还是旧快照
+    expect(store.list().length).toBe(before)
+    store.reload()
+    const after = store.list()
+    expect(after.length).toBe(before + 1)
+    expect(after.some((one) => one.hash === 'fresh333')).toBe(true)
+    expect(store.stats().pending).toBe(1)
+  })
+
+  it('索引文件是坏 JSON / 空串时 reload 不覆盖磁盘、不炸', () => {
+    const { root, store } = seededStore()
+    const before = store.list().length
+    writeFileSync(join(root, 'index.json'), '{ broken')
+    store.reload()
+    expect(store.list().length).toBe(before)
+    expect(readFileSync(join(root, 'index.json'), 'utf8')).toBe('{ broken')
+    writeFileSync(join(root, 'index.json'), '')
+    store.reload()
+    expect(store.list().length).toBe(before)
+  })
+})

@@ -349,7 +349,7 @@ export function registerTools(
   // cleanOutboundText；[[reply:<mid>]] / [[at:QQ]] 标记由 sendToChat 统一处理。
   register(defineTool({
     name: 'qq_send_text',
-    description: '发一条文字消息。**正常聊天不要用这个工具，直接把话写在回复正文里**（正文会自动分气泡）。只有要开长活（画图、点歌/唱歌、改程序跑测试这类要等几十秒以上的）才先用它吱一声「等着，这就去」；要引用某条消息就传 reply_to。',
+    description: '发一条文字消息。**正常聊天不要用这个工具，直接把话写在回复正文里**（正文会自动分气泡）。只允许在这两件事上用一次：① 唱歌 / 点歌 / 换声；② 画图 / 出视频——开头说一句「等着，这就去」再动手。除此以外一律写正文：汇报、确认产物、解释机制、回答提问、说「改完了」「重启一下」、贴结论、认错、改代码、跑测试、查配置，先用工具说一遍就会让同一件事出现两次。判据：只有唱歌和画图才吱声，别的都闭嘴写正文。要引用某条消息就传 reply_to。',
     parameters: {
       text: { type: 'string', required: true, description: '要发送的文字' },
       chat_id: { type: 'string', description: '目标会话，格式 private:<QQ号> 或 group:<群号>；省略时默认当前会话' },
@@ -369,6 +369,51 @@ export function registerTools(
   }))
 
   // 2026-11-19 主人要求：qq_send_segments 工具下线（分条由 outbound 自动切气泡）。
+
+  register(defineTool({
+    name: 'qq_post_qzone',
+    description: '发一条 QQ 空间说说（不需要 chat_id，发到机器人自己号的空间）。用于主动分享心情/今天发生的事。',
+    parameters: {
+      content: {
+        type: 'string',
+        required: true,
+        description: '说说正文（纯文本，不要话题标签；300 字以内）',
+      },
+      visibility: {
+        type: 'string',
+        description: '可见范围：public 所有人（默认）/ friends 好友 / private 仅自己',
+      },
+      images: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '可选配图：本地绝对路径，最多 9 张',
+      },
+    },
+    output: { schema: { type: 'json' }, render: (_args: unknown, value: unknown) => {
+      const v = value as { tid?: string }
+      return [{ type: 'text', text: v.tid ? '已发说说（tid=' + v.tid + '）' : '已发说说' }]
+    } },
+    isConcurrencySafe: () => true,
+    execute: async (args, exec) => {
+      const a = args as { content?: unknown, visibility?: unknown, images?: unknown }
+      const content = typeof a.content === 'string' ? a.content.trim() : ''
+      if (content === '') throw new Error('qq_post_qzone: content 不能为空')
+      if (content.length > 300) throw new Error('qq_post_qzone: content 太长（上限 300 字）')
+      const visibility = a.visibility === 'friends' || a.visibility === 'private' ? a.visibility : 'public'
+      const ugcRight = visibility === 'friends' ? 4 : visibility === 'private' ? 64 : 1
+      const params: Record<string, unknown> = { content, ugc_right: ugcRight }
+      const images = Array.isArray(a.images) ? a.images.filter((s): s is string => typeof s === 'string') : []
+      if (images.length > 0) {
+        if (images.length > 9) throw new Error('qq_post_qzone: 一次最多 9 张配图')
+        const allowedRoots = await mediaRoots(bridge, exec)
+        const encoded: string[] = []
+        for (const source of images) encoded.push(await fencedMediaFile(source, limits.maxImageBytes, allowedRoots))
+        params.images = encoded.map((b64) => 'base64://' + b64)
+      }
+      const result = await connection.call('send_qzone_msg', params) as { tid?: unknown } | null
+      return { tid: result !== null && typeof result === 'object' ? String(result.tid ?? '') : '' }
+    },
+  }))
 
   register(defineTool({
     name: 'qq_napcat_api',

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * dsh-onebot: a QQ (OneBot 11 / NapCat) chat channel for DeepSeek Harness.
  *
  * Mounts inside the dsh host process: a reverse- or forward-WebSocket link to
@@ -49,6 +49,8 @@ const PROACTIVE_MESSAGE_SOURCE = { kind: 'plugin:dsh-onebot' } as const
 let createUserMessage: typeof import('@deepseek-ai/dsh-llm').createUserMessage
 let BlockAssembler: typeof import('@deepseek-ai/dsh-llm').BlockAssembler
 let ProactiveTalk: typeof import('./proactive.js').ProactiveTalk
+// 2026-11-23：QQ 空间说说（设置面板 → 行为 → QQ空间）。
+let QzonePost: typeof import('./qzone.js').QzonePost
 let StickerStore: typeof import('./stickers.js').StickerStore
 let DEFAULT_STICKER_ROOT: string
 
@@ -65,6 +67,7 @@ try {
   ;({ describeError } = await import('./errors.js'))
   ;({ createUserMessage, BlockAssembler } = await import('@deepseek-ai/dsh-llm'))
   ;({ ProactiveTalk } = await import('./proactive.js'))
+  ;({ QzonePost } = await import('./qzone.js'))
   ;({ StickerStore, DEFAULT_STICKER_ROOT } = await import('./stickers.js'))
   ;({ resolveUserQuestions } = await import('./ask-tool.js'))
 } catch (error) {
@@ -223,6 +226,14 @@ export interface Config {
     attemptGapMinutes: number
     burstProb: number
   }
+  /** QQ 空间说说（本地加 2026-11-23）：定时／按条件自己发一条说说。
+   *  键名扁平 qzoneXxx（不走嵌套，省得再写一层折叠），见 src/qzone.ts。 */
+  qzoneEnabled: boolean
+  qzoneMaxPerDay: number
+  qzoneMinGapMinutes: number
+  qzoneQuietFrom: number
+  qzoneQuietTo: number
+  qzoneVisibility: 'public' | 'friends' | 'private'
   /** Per-chat per-minute sliding-window cap for normal (non-command) messages; 0 disables. */
   rateLimitPerMinute: number
   restrictedMemberPrefix: boolean
@@ -463,6 +474,19 @@ export const Config: Z<Config> = z.object({
       .description('开口时拆成 2~3 条连着发的概率（0–1）'),
   }).default({})
     .description('主动搭话（合并自 startup/qq-alive.mjs，2026-11-19）：机器人自己判断要不要主动找主人说话'),
+  // QQ 空间说说（本地加 2026-11-23，主人要求）：自己发动态，不是回消息。
+  qzoneEnabled: z.boolean().default(false)
+    .description('QQ 空间说说（本地加 2026-11-23）：按下面的门槛自己发一条说说；false = 完全关闭（不建定时器、不花 token）'),
+  qzoneMaxPerDay: z.number().min(0).max(20).default(3)
+    .description('一天最多发几条说说（按本地日期重置；0 = 不发）'),
+  qzoneMinGapMinutes: z.number().min(0).default(240)
+    .description('两条说说之间至少隔多少分钟'),
+  qzoneQuietFrom: z.number().min(0).max(23).default(22)
+    .description('安静时段起点（小时，含）——这段时间不自动发'),
+  qzoneQuietTo: z.number().min(0).max(23).default(6)
+    .description('安静时段终点（小时，不含）'),
+  qzoneVisibility: z.union([z.const('public'), z.const('friends'), z.const('private')]).default('public')
+    .description('说说默认可见范围：public 所有人 / friends 好友 / private 仅自己'),
   rateLimitPerMinute: z.number().default(30)
     .description('每 chat 每分钟允许的普通消息条数上限（60 秒滑动窗口）；命令消息不计入也不受限；超限时每窗口最多提示一次；0=禁用频控'),
   restrictedMemberPrefix: z.boolean().default(true)
@@ -936,6 +960,32 @@ export function apply(ctx: Context, config: Config): void {
   /** 表情包自动收集的定时器（2026-11-20 已去掉——改成收到图立刻入库）。 */
   let stickerTimer: ReturnType<typeof setInterval> | undefined
 
+  // QQ 空间说说（本地加 2026-11-23）：跟主动搭话同一个生成通道（当前会话模型），
+  // 发布走 NapCat 的 send_qzone_msg 扩展接口。
+  const qzonePublish = async (content: string, ugcRight: number): Promise<string> => {
+    const result = await connection.call('send_qzone_msg', { content, ugc_right: ugcRight }) as { tid?: unknown } | null
+    const tid = result !== null && typeof result === 'object' ? String(result.tid ?? '') : ''
+    return tid
+  }
+  type QzonePostInstance = InstanceType<typeof QzonePost>
+  let qzone: QzonePostInstance | undefined
+  if (config.qzoneEnabled !== false) {
+    qzone = new QzonePost({
+      config: {
+        enabled: true,
+        maxPerDay: config.qzoneMaxPerDay,
+        minGapMinutes: config.qzoneMinGapMinutes,
+        quietFrom: config.qzoneQuietFrom,
+        quietTo: config.qzoneQuietTo,
+        visibility: config.qzoneVisibility,
+      },
+      log,
+      dshHome: dshHome(),
+      generateText: proactiveGenerateText,
+      publish: qzonePublish,
+    })
+  }
+
   // Lifecycle: start the bridge and transport; unwind everything on unload.
   // The effect body is async (cordis AsyncEffect): injectChannel.start() must
   // be awaited — it skips history before arming its poll timer, and a stop
@@ -973,6 +1023,8 @@ export function apply(ctx: Context, config: Config): void {
     // 等连接就绪后再调 —— 漏了这一步实例就是个死对象：noteInbound 因为 chatIds
     // 还是空的直接 return（连 lastUserAt 都不写），定时器也从不排。
     proactive?.start()
+    // QQ 空间说说（本地加 2026-11-23）：跟搭话一样等连接就绪后再排节拍。
+    qzone?.start()
     // 表情包自动收集（2026-11-19 本地加 / 2026-11-20 改成零延迟）：新图在入站
     // 落盘那一刻就由 inbound 的 collectSticker 收进「未审核」，这里不再排定时器。
     // 只留启动时扫一遍——把停机期间漏掉的、或手动丢进媒体目录的旧图补进来。
@@ -987,6 +1039,7 @@ export function apply(ctx: Context, config: Config): void {
     // QQ 平台说明与 qq_* 工具现按会话 agent 注入（见 ChatBridge.installChannelScope）
     return async () => {
       if (stickerTimer !== undefined) clearInterval(stickerTimer)
+      qzone?.stop()
       proactive?.stop()
       await injectChannel?.stop()
       await bridge.stop()

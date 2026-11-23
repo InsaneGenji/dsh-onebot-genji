@@ -419,6 +419,11 @@ export declare class ChatBridge {
     private readonly groupContextBuf;
     /** 群名缓存（本地补丁 2026-11-17）：group:123 → 群名，定名时少调一次 get_group_info。 */
     private readonly qqGroupTitles;
+    /** 主动搭话原话（本地加 2026-11-23）：每 chat 最近几条自己主动发出去的话。
+     *  原因：主动搭话走 sendToChat 直发，不进会话历史，主人回过来时模型不知道
+     *  自己在接什么，表现为「忘了自己主动发过什么」。prefixTurn 把它作为上下文
+     *  前缀喂回去，用过一次就消费掉（每条只顶一次，免得越攒越脏）。 */
+    private readonly proactiveSaid;
     /** W1/T5: chatId → the traceId of the chat's unsettled INJECTED round
      * (independent of the trace sink, so the dry-run guard covers the async
      * agent reply even with tracing off). Cleared by a real dispatch to the
@@ -570,6 +575,12 @@ export declare class ChatBridge {
     /** Prepend per-chat context directives (/goal reminder) to a turn's user
      * text. Plan mode is host-owned now (/plan forwards to the host command),
      * so the agent's own plan-mode instruction section governs planning. */
+    /** 主动搭话发出去之后登记原话（2026-11-23 本地加，见 proactiveSaid 注释）。 */
+    noteProactiveSaid(chatId: ChatId, text: string): void;
+    /** 取走（消费）这几条主动说过的话，拼成一段上下文；没有就返回 ''。
+     *  2026-11-23 主人裁决：不走前缀，改走 agent.inject 写进真历史
+     *  （前缀一压缩就没了，inject 进的是会话事件流，压缩和 soul 都认）。 */
+    private takeProactiveSaid;
     private prefixTurn;
     /** Per-chat outbound-mode override (/mode), falling back to the global config. */
     private effectiveInterim;

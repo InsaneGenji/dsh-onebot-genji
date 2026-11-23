@@ -1066,3 +1066,18 @@ docker restart 会丢登录态（需重新扫码/QCE 登录）
 - **部署**：活体 /Users/mario/dsh-onebot 从本地开发仓 fetch 快进到 7478ab8（GitHub 当晚 SSL 抖动，push 待网络恢复补推）；desktop profile 的 node_modules/dsh-onebot-qq 为文件副本（file: 直挂），rsync 同步后重启 DeepSeek Harness 应用生效。
 - **真机点验**：旁观页签渲染正确（desc「群聊旁观与主动插话」+ 开关 + hint，4 个 showIf 字段默认隐藏）；权限页「成员工具权限」三档分段控件（禁用全部/仅发送类/不限）+ hint 落位正确，默认禁用全部。en 界面 Lurk 页签/Member tool access 同步验证（宿主语言实切 English）。
 - **四图重截**：docs/settings-ui-connection.jpg / behavior.jpg（zh）与 -en.jpg 两张（1280×820 实拍，暗色主题跟随宿主），页签条均为七组口径；宿主语言拍后切回中文还原。
+
+## 2026-11-23 本地分叉 0.16.0：QQ 空间说说 + 出站标记清洗 + 面板刷新
+
+一批本地日常用下来的改动合批，对外发 0.16.0。
+
+- **QQ 空间说说（新功能，src/qzone.ts）**：设置页新增独立「QQ空间」页签（排在「表情包」后）：开关（默认关）、一天最多几条（默认 3）、两条最小间隔（默认 240 分钟）、安静时段（默认 22→6）、可见范围（公开/好友/仅自己）。到点由 QzonePost.loopOnce 判定后让当前会话模型写一条当天的事（1~3 句、不提「主人」、不带话题标签），走 NapCat 扩展接口 send_qzone_msg 发布；状态落 `~/.dsh/qzone-state.json`。另加模型工具 qq_post_qzone（content / visibility / images，图走 `base64://`），可手动发。NapCat 只有 `send_qzone_msg` / `delete_qzone_msg`，改不了空间访客权限。
+- **出站清洗内部标记（src/outbound.ts）**：`stripBoundaryLeakage` 里新增一段无条件规则——整行 `[图片:<路径>]` / `[表情包:<路径>]`（含前置时间戳）整行丢弃，句中夹的只删标记；`Attached image(s) from tool result:` 整行丢弃；行首 `[HH:MM]` / `[HH:MM 昵称(QQ)·档位]` 前缀删除。裸 `[图片]` 不动。新增 tests/internal-marker-leak.spec.ts 5 例。
+- **表情包面板刷新不更新（src/stickers.ts / src/settings-remote.ts）**：`StickerStore` 新增 `reload()`——先自己严格解析 index.json，失败/空串直接 return（不能走 `ensure()`，解析失败会重建覆盖写盘），通过后才 `ensure()+normalize()`；`listStickers()` 在 `storeOf()` 之后调一次。修的是面板缓存的 store 实例只读一次盘、自动收集写的新图永远不出现。
+- **气泡条数不再封顶（src/outbound.ts）**：带编号列表 `limit = merged.length`，一行一条写多少发多少；不带编号的普通聊天仍只有 `maxBubbles`（默认 4）。顺带修了「说明行比编号项多时被 join 成一条」的挤压。
+- **语音条回合不再重复发正文（src/registry.ts / src/interim.ts / src/tools.ts / src/bridge.ts）**：ChatAgent 加 `turnFormVoice` / `voiceSentThisTurn`，`dropVoiceDuplicate` 在本回合已发过语音时把回合末正文整块丢掉。
+- **主动搭话进上下文（src/bridge.ts / src/proactive.ts）**：主动发出去的话记进 `proactiveSaid`（12 小时内最近 3 条），下一个真实回合用 `agent.inject(createUserMessage({source:{kind:'plugin:dsh-onebot'}}))` 写成一条 user 记录，而不是拼在正文前缀上——这样它进真历史、可压缩、可被记忆抽取。
+- **qq_send_text 判据收紧（src/prompt.ts / src/tools.ts）**：只有「唱歌/点歌/换声」和「画图/出视频」允许在开头用一次，其余一律写正文；同一轮既调工具又写正文会导致重复发送。
+- **删掉双发闸死代码（src/outbound.ts）**：`isDuplicateTopic` / `textTopicKey` / `topicSimilarity` / `DUPLICATE_TOPIC_THRESHOLD` 全仓库零调用，整块删除（约 2KB）。现在只剩语音条那一处去重。
+
+验证：tsc exit 0；全量 1159 tests / 1143 passed / 3 skipped / 13 failed（13 个全是 Windows 环境固有：commands×2、media-cleanup×1、media-guard×5、stt-silk×1、tools-gate×4，在干净 HEAD worktree 上同样失败）；八个 `startup/settings-*.mjs` 校验脚本全 exit 0。

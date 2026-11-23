@@ -290,8 +290,15 @@ export function splitIntoBubbles(text: string, maxBubbles = 4, sentenceCut = 35)
     merged.push(...line)
   }
   if (merged.length === 0) return []
-  // 4. 上限控制（有编号列表时按列表项放宽，最多 8 条）
-  const limit = Math.max(1, listCount >= 2 ? Math.min(8, Math.max(maxBubbles, listCount)) : maxBubbles)
+  // 4. 上限控制
+  // 2026-11-23 主人抓到的 bug：「两句说明 + 1~4 四个编号 + 一句收尾」一共 7 行，
+  // 却只按 listCount=4 放宽到 4 条 —— 超出的 2、3、4 和收尾被 join(' ') 拼成
+  // 一条。列表演示里说明行常常比编号项多，所以把实际行数（merged.length）
+  // 也纳入判据。
+  // 2026-11-23 晚 主人第二次要求：**编号列表不封顶**（之前封 8，我写 10 条
+  // 对比项被压成 8 条，他又看到「没分条」）。带编号的列表一律一行一条，
+  // 有几行出几条；不带编号的普通聊天照旧只有 maxBubbles（避免一句话刷屏）。
+  const limit = listCount >= 2 ? merged.length : maxBubbles
   const out = merged.length > limit
     ? [...merged.slice(0, limit - 1), merged.slice(limit - 1).join(' ')]
     : merged
@@ -319,67 +326,6 @@ export function bubbleGapMs(prevText = '', random: () => number = Math.random): 
   const raw = Math.round(base * (0.85 + jitter * 0.3))
   return Math.min(BUBBLE_GAP_MAX_MS, Math.max(BUBBLE_GAP_MIN_MS, raw))
 }
-
-/**
- * 双发闸（语义版，2026-11-19 主人要回）：判断「回合末正文」是不是把工具
- * （qq_send_text / 图片配文那种）刚说过的话又重复了一遍。纯文本启发式，
- * 不调模型：先归一化（去掉空白、标点、符号、emoji、括号里的颜文字），
- * 再比二元组 Dice 系数。长度差超过一倍直接判不重复（一句是新内容）。
- */
-export function textTopicKey(text: string): string {
-  return String(text ?? '')
-    .replace(/\([^()]*\)|（[^（）]*）|\[[^\[\]]*\]|【[^】]*】/g, '')
-    .replace(/[\s\p{P}\p{S}]/gu, '')
-    .toLowerCase()
-}
-
-/** 二元组 Dice 系数（0–1）：1 = 归一化后一模一样。 */
-export function topicSimilarity(a: string, b: string): number {
-  const x = textTopicKey(a)
-  const y = textTopicKey(b)
-  if (x === '' || y === '') return 0
-  if (x === y) return 1
-  const grams = (value: string): Map<string, number> => {
-    const out = new Map<string, number>()
-    if (value.length === 1) out.set(value, 1)
-    for (let i = 0; i < value.length - 1; i += 1) {
-      const gram = value.slice(i, i + 2)
-      out.set(gram, (out.get(gram) ?? 0) + 1)
-    }
-    return out
-  }
-  const gx = grams(x)
-  const gy = grams(y)
-  let overlap = 0
-  let total = 0
-  for (const [gram, count] of gx) {
-    total += count
-    overlap += Math.min(count, gy.get(gram) ?? 0)
-  }
-  for (const count of gy.values()) total += count
-  return total === 0 ? 0 : (2 * overlap) / total
-}
-
-/** 判重阈值：0.72 能把「我先去跑，几十秒」/「我去跑，几十秒」判成同一句，
- * 又能放过「来了」+「来了，我这就去扒谱」这种后半句有新信息的。 */
-export const DUPLICATE_TOPIC_THRESHOLD = 0.72
-
-/** 语义判重：归一化后同串直接算重复，否则二元组 Dice ≥ 阈值算重复。 */
-export function isDuplicateTopic(a: string, b: string, threshold = DUPLICATE_TOPIC_THRESHOLD): boolean {
-  const x = textTopicKey(a)
-  const y = textTopicKey(b)
-  if (x === '' || y === '') return false
-  if (x === y) return true
-  const shorter = Math.min(x.length, y.length)
-  const longer = Math.max(x.length, y.length)
-  if (longer === 0 || shorter / longer < 0.5) return false
-  return topicSimilarity(a, b) >= threshold
-} 
-
-/** 双发闸已于 2026-11-22 整套删除（主人定：正常聊天不调 qq_send_text，只在开长活时
- * 先用它吱一声，两边不会再撞）。这里原先的 `dedupeToolEcho`（工具说过话 → 回合末
- * 正文整条不写）随之删除；下面的相似度工具函数保留，供别处按需复用。 */
-
 
 /** Options for an explicit outbound send (from tools). */
 export interface SendOptions {
@@ -438,6 +384,27 @@ export function stripBoundaryLeakage(text: string): string {
     .replace(/(\S)<\/user>[ \t]*$/gm, '$1')
     .replace(/^[ \t]*<\/?user>[ \t]*\r?\n?/gm, '')
   if (base !== text) base = base.replace(/\n{3,}/g, '\n\n').trim()
+  // 2026-11-23 主人要求：出站剥掉「内部调度标记」。模型有时把入站占位、工具回执
+  // 抬头、入站时间戳当正文抄回来，用户在 QQ 里就看见 `[图片:C:\...]`、
+  // `Attached image(s) from tool result:`、光秃秃一个 `[14:21]` 气泡。
+  // 只剥这几种行锚定/带路径形态，正文里正常聊到的字眼不动：
+  //  1) 整行只是 `[图片:<路径>]` / `[表情包:<路径>]`（可带前置时间戳）——整行丢弃；
+  //  2) 句中夹的 `[图片:<路径>]`——只删标记本身，保留句子；
+  //  3) 工具回执抬头 `Attached image(s) from tool result:`——整行丢弃；
+  //  4) 行首 `[HH:MM]` / `[HH:MM 昵称(QQ)·档位]` 入站时间戳前缀——只删前缀，
+  //     整行只剩时间戳时该行自然变空被丢弃（这就是那个空气泡的成因）。
+  const beforeInternal = base
+  base = base
+    .replace(/^[ \t]*(?:\[\d{1,2}:\d{2}(?:\s[^\]\r\n]*)?\][ \t]*)?\[(?:图片|表情包)\s*[:：][^\]\r\n]*\][ \t]*\r?\n?/gm, '')
+    .replace(/\[(?:图片|表情包)\s*[:：][^\]\r\n]{1,400}\]/g, '')
+    .replace(/^[ \t]*Attached\s+images?(?:\s*\(s\))?\s+from\s+tool\s+result\s*:?[ \t]*\r?\n?/gmi, '')
+    .replace(/^[ \t]*\[\d{1,2}:\d{2}(?:\s[^\]\r\n]*)?\][ \t]*/gm, '')
+  if (base !== beforeInternal) {
+    base = base
+      .replace(/[ \t]+$/gm, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  }
   // #46（最新评论）: skill_content 成对块、system-reminder / system_reminder
   // 成对块（两种拼写都会出现，可嵌套、可混用）与 </input> 收尾标签。两段式
   // 清洗：先整块丢弃成对宿主块，\1 反向引用要求开闭拼写一致才成对，懒惰匹配
