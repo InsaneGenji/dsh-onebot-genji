@@ -36,7 +36,11 @@ describe('splitIntoBubbles 气泡末尾不带句号', () => {
   })
 
   it('多条气泡每条都剥', () => {
-    expect(splitIntoBubbles('1. 第一条。\n2. 第二条。')).toEqual(['1. 第一条', '2. 第二条'])
+    expect(splitIntoBubbles('好的，我知道了。\n真的假的。')).toEqual(['好的，我知道了', '真的假的'])
+  })
+
+  it('列表行并成一条时也逐行剥（2026-11-24 第八版）', () => {
+    expect(splitIntoBubbles('1. 第一条。\n2. 第二条。')).toEqual(['1. 第一条\n2. 第二条'])
   })
 
   it('叹号结尾原样保留', () => {

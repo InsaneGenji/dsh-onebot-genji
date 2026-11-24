@@ -6,6 +6,10 @@
  * (a late assistant/message during settlement, a double turn/end) and the
  * synchronous booking/drain behavior (placeholder at enqueue, id backfill on
  * completion, placeholder drop on send failure).
+ *
+ * 2026-11-24 主人让去掉「自动撤回中间消息」和「中间消息保留时长」：中间消息
+ * 发出去就留在聊天里，回合末不再发 t2i 小结卡、也不再 delete_msg 撤回。本文件
+ * 相应删掉了撤回定时器 / 小结卡 / 撤回队列的全部断言。
  * @module dsh-onebot/tests/interim-machine
  */
 import { describe, expect, it, vi } from 'vitest'
@@ -13,10 +17,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { InterimTracker } from '../src/interim.js'
 import type { InterimChat } from '../src/interim.js'
 
-function makeHarness(opts?: { interim?: boolean; interimRecallMs?: number; interimRecall?: boolean; failSends?: boolean; sendIds?: string[]; maxImageBytes?: number }) {
+function makeHarness(opts?: {
+  interim?: boolean
+  failSends?: boolean
+  sendIds?: string[]
+  generateText?: (prompt: string, options?: { signal?: AbortSignal }) => Promise<string>
+}) {
   const sentTexts: string[] = []
-  const recalledIds: string[] = []
-  const summaryCards: number[] = []
+  const prompts: string[] = []
   let interimMode = opts?.interim ?? true
   const tracker = new InterimTracker({
     sendToChat: async (_chatId, text) => {
@@ -24,32 +32,21 @@ function makeHarness(opts?: { interim?: boolean; interimRecallMs?: number; inter
       sentTexts.push(text)
       return opts?.sendIds ?? ['7']
     },
-    sendMsg: async (_chatId, segments) => {
-      summaryCards.push(segments.length)
-      return '8'
-    },
-    call: async (action, params) => {
-      if (action === 'delete_msg') recalledIds.push(String(params.message_id))
-      return undefined
-    },
     chainTail: async () => undefined,
     relayHostCards: () => undefined,
     effectiveInterim: () => interimMode,
     log: () => undefined,
-    config: {
-      interimRecallMs: opts?.interimRecallMs,
-      interimRecall: opts?.interimRecall,
-      maxImageBytes: opts?.maxImageBytes ?? 8 * 1024 * 1024,
-      cardFooter: 'dsh',
-      fontFiles: [],
-      fontFamilies: [],
-    },
+    generateText: opts?.generateText === undefined
+      ? undefined
+      : async (prompt, options) => {
+        prompts.push(prompt)
+        return opts.generateText!(prompt, options)
+      },
+    config: {},
   })
   const chat: InterimChat = {
     loopPending: null,
     loopBuffer: [],
-    recallTimers: new Map(),
-    recalledInterimIds: new Set(),
     lastHandledMessageId: undefined,
     turnFormVoice: false,
     voiceSentThisTurn: false,
@@ -61,13 +58,11 @@ function makeHarness(opts?: { interim?: boolean; interimRecallMs?: number; inter
       : [{ type: 'text', text }],
   })
   // Fixed tick for microtask-only drains (send backfill etc. — microtasks
-  // settle before this timer fires). It deliberately does NOT bound the full
-  // settlement drain (summary card + RECALL_SPACING_MS recall spacing): the
-  // drain-heavy tests wait on the terminal state ('idle', set last in
-  // settleLoop) via vi.waitFor instead, so load can never outrun a fixed
-  // timeout.
+  // settle before this timer fires). The settlement drain is bounded by the
+  // terminal state ('idle', set last in settleLoop) via vi.waitFor instead,
+  // so load can never outrun a fixed timeout.
   const settle = () => new Promise(resolve => setTimeout(resolve, 120))
-  return { tracker, chat, sentTexts, recalledIds, summaryCards, assistant, settle, setMode: (value: boolean) => { interimMode = value } }
+  return { tracker, chat, sentTexts, prompts, assistant, settle, setMode: (value: boolean) => { interimMode = value } }
 }
 
 describe('InterimTracker state machine (M3-D2a)', () => {
@@ -91,7 +86,6 @@ describe('InterimTracker state machine (M3-D2a)', () => {
     expect(h.chat.loopBuffer[0].id).toBe('7')
     expect(h.chat.loopBuffer[0].sentAt).toBeGreaterThan(0)
     expect(h.sentTexts).toEqual(['带工具'])
-    expect(h.chat.recallTimers.has('7')).toBe(true)
   })
 
   it('accumulating × assistant(interim) → accumulating: the prior deferred text flushes as interim', async () => {
@@ -106,28 +100,25 @@ describe('InterimTracker state machine (M3-D2a)', () => {
     expect(h.chat.loopBuffer[0].text).toBe('第一步')
   })
 
-  it('accumulating × turn/end (interim) → settling → idle: summary card, recall, final', async () => {
+  it('accumulating × turn/end (interim) → settling → idle: the final goes out, nothing is recalled', async () => {
     const h = makeHarness()
     h.tracker.onAssistantMessage('private:10001', h.chat, h.assistant('中间步', { toolCall: true }) as never)
     h.tracker.onAssistantMessage('private:10001', h.chat, h.assistant('最终答') as never)
     h.tracker.onTurnEnd('private:10001', h.chat)
     expect(h.tracker.stateOf(h.chat)).toBe('settling')
     await vi.waitFor(() => expect(h.tracker.stateOf(h.chat)).toBe('idle'))
-    expect(h.summaryCards).toHaveLength(1)
-    expect(h.recalledIds).toEqual(['7'])
+    // 只有两条：中间步实时发出 + 最终答；没有小结卡、没有撤回。
     expect(h.sentTexts).toEqual(['中间步', '最终答'])
     expect(h.chat.loopBuffer).toHaveLength(0)
     expect(h.chat.loopPending).toBeNull()
   })
 
-  it('idle × turn/end (interim) → settling → idle with an empty trail: no card, no recall, no final', async () => {
+  it('idle × turn/end (interim) → settling → idle with an empty trail: no final', async () => {
     const h = makeHarness()
     h.tracker.onTurnEnd('private:10001', h.chat)
     expect(h.tracker.stateOf(h.chat)).toBe('settling')
     await h.settle()
     expect(h.tracker.stateOf(h.chat)).toBe('idle')
-    expect(h.summaryCards).toEqual([])
-    expect(h.recalledIds).toEqual([])
     expect(h.sentTexts).toEqual([])
   })
 
@@ -137,8 +128,7 @@ describe('InterimTracker state machine (M3-D2a)', () => {
     h.tracker.onTurnEnd('private:10001', h.chat)
     h.tracker.onTurnEnd('private:10001', h.chat)
     await vi.waitFor(() => expect(h.tracker.stateOf(h.chat)).toBe('idle'))
-    expect(h.summaryCards).toHaveLength(1)
-    expect(h.recalledIds).toEqual(['7'])
+    expect(h.sentTexts).toEqual(['中间步'])
     expect(h.tracker.stateOf(h.chat)).toBe('idle')
   })
 
@@ -163,7 +153,6 @@ describe('InterimTracker state machine (M3-D2a)', () => {
     expect(h.tracker.stateOf(h.chat)).toBe('idle')
     await h.settle()
     expect(h.sentTexts).toEqual(['最终答'])
-    expect(h.summaryCards).toEqual([])
   })
 
   it('idle × turn/end (instant mode) → idle, nothing sent', () => {
@@ -196,12 +185,12 @@ describe('InterimTracker state machine (M3-D2a)', () => {
     await h.settle()
   })
 
-  it('turn/start → idle plus the B8 prune of recalledInterimIds', () => {
+  it('turn/start → idle', () => {
     const h = makeHarness()
-    h.chat.recalledInterimIds.add('7')
-    h.tracker.onTurnStart(h.chat)
+    h.tracker.onAssistantMessage('private:10001', h.chat, h.assistant('一步') as never)
+    expect(h.tracker.stateOf(h.chat)).toBe('accumulating')
+    h.tracker.onTurnStart('private:10001', h.chat)
     expect(h.tracker.stateOf(h.chat)).toBe('idle')
-    expect(h.chat.recalledInterimIds.size).toBe(0)
   })
 
   it('empty text is a no-op for the machine; a duplicate message id is ignored entirely', () => {
@@ -215,7 +204,7 @@ describe('InterimTracker state machine (M3-D2a)', () => {
     expect(h.chat.loopPending).toBe('一步')
   })
 
-  it('a failed send drops its placeholder: never summarized, never recalled', async () => {
+  it('a failed send drops its placeholder: never sent as a final, buffer stays empty', async () => {
     const h = makeHarness({ failSends: true })
     h.tracker.onAssistantMessage('private:10001', h.chat, h.assistant('发不出去', { toolCall: true }) as never)
     expect(h.chat.loopBuffer).toHaveLength(1)
@@ -223,8 +212,7 @@ describe('InterimTracker state machine (M3-D2a)', () => {
     expect(h.chat.loopBuffer).toHaveLength(0)
     h.tracker.onTurnEnd('private:10001', h.chat)
     await h.settle()
-    expect(h.summaryCards).toEqual([])
-    expect(h.recalledIds).toEqual([])
+    expect(h.sentTexts).toEqual([])
   })
 
   it('a multi-id send expands the placeholder into one entry per message id', async () => {
@@ -233,56 +221,141 @@ describe('InterimTracker state machine (M3-D2a)', () => {
     expect(h.chat.loopBuffer).toHaveLength(1)
     await h.settle()
     expect(h.chat.loopBuffer.map(entry => entry.id)).toEqual(['7', '8'])
-    expect(h.chat.recallTimers.has('7')).toBe(true)
-    expect(h.chat.recallTimers.has('8')).toBe(true)
   })
 
-  it('the auto-recall timer revokes alone and records the id (default recall on)', async () => {
-    const h = makeHarness({ interimRecallMs: 20 })
-    h.tracker.onAssistantMessage('private:10001', h.chat, h.assistant('会撤回', { toolCall: true }) as never)
-    await h.settle()
-    await new Promise(resolve => setTimeout(resolve, 60))
-    expect(h.recalledIds).toEqual(['7'])
-    expect(h.chat.recalledInterimIds.has('7')).toBe(true)
-  })
-
-  it('interimRecall=false: settlement skips the card and the recall, flushes only the final', async () => {
-    const h = makeHarness({ interimRecall: false })
-    h.tracker.onAssistantMessage('private:10001', h.chat, h.assistant('中间步', { toolCall: true }) as never)
+  it('settlement keeps every interim on screen: no delete_msg, no summary card', async () => {
+    const h = makeHarness()
+    h.tracker.onAssistantMessage('private:10001', h.chat, h.assistant('会留着', { toolCall: true }) as never)
     h.tracker.onAssistantMessage('private:10001', h.chat, h.assistant('最终答') as never)
     h.tracker.onTurnEnd('private:10001', h.chat)
-    await h.settle()
-    expect(h.tracker.stateOf(h.chat)).toBe('idle')
-    expect(h.summaryCards).toEqual([])
-    expect(h.recalledIds).toEqual([])
-    expect(h.sentTexts).toEqual(['中间步', '最终答'])
-    expect(h.chat.recallTimers.size).toBe(0)
+    await vi.waitFor(() => expect(h.tracker.stateOf(h.chat)).toBe('idle'))
+    expect(h.sentTexts).toEqual(['会留着', '最终答'])
     expect(h.chat.loopBuffer).toHaveLength(0)
   })
 })
 
-describe('#36 summary-card leakage stripping', () => {
-  it('strips user_message echo per entry and drops entries the strip emptied', async () => {
-    // maxImageBytes 1 forces the card body down the sendToChat fallback,
-    // where the exact rendered text is observable.
-    const h = makeHarness({ maxImageBytes: 1 })
-    // Trailing echo after prose: stripped to the prose alone (#26 semantics).
-    h.tracker.onAssistantMessage('private:10001', h.chat, h.assistant('好的，我查一下。<user_message qq="10001" nickname="测试昵称">\n帮我看下今天天气\n</user_message>', { toolCall: true }) as never)
-    // A stray self-closing tag strips to empty: the entry must be dropped, not numbered.
-    h.tracker.onAssistantMessage('private:10001', h.chat, h.assistant('<user_message qq="10001" nickname="测试昵称" />', { toolCall: true, id: 'm2' }) as never)
+describe('2026-11-24 静默兜底（方案四：150 秒没动静插件主动插一句）', () => {
+  /** 这个 describe 全程用假时钟：真等 90 秒会把测试拖死。 */
+  const setup = (opts?: { interim?: boolean }) => {
+    vi.useFakeTimers()
+    const h = makeHarness(opts)
+    return h
+  }
+
+  it('一路纯工具调用、150 秒一个字没说 → 到点自己插一句，说清做到哪一步', async () => {
+    const h = setup()
+    h.tracker.onTurnStart('private:10001', h.chat)
+    // 三次纯工具调用：看文件 → 改代码 → 跑命令（text 为空，不算「说过话」）。
+    const tools = ['read', 'edit', 'bash']
+    for (let i = 0; i < tools.length; i += 1) {
+      h.tracker.onAssistantMessage('private:10001', h.chat, { id: 'tool' + i, content: [{ type: 'tool-call', id: 'c', name: tools[i], arguments: '{}' }] } as never)
+    }
+    expect(h.sentTexts).toEqual([])
+    await vi.advanceTimersByTimeAsync(150_000)
+    expect(h.sentTexts).toHaveLength(1)
+    // 说的不是「还在跑」这种干巴巴一句，而是带着进度：刚看文件，现在在跑命令。
+    expect(h.sentTexts[0]).toContain('看文件')
+    expect(h.sentTexts[0]).toContain('跑命令')
+    vi.useRealTimers()
+  })
+
+  it('中途说过话 → 看门狗重置，150 秒内不再插话', async () => {
+    const h = setup()
+    h.tracker.onTurnStart('private:10001', h.chat)
+    await vi.advanceTimersByTimeAsync(60_000)
+    // 60 秒时说了一句（可见正文），计时重来。
+    h.tracker.onAssistantMessage('private:10001', h.chat, h.assistant('先看一眼', { toolCall: true }) as never)
+    await vi.advanceTimersByTimeAsync(140_000)
+    // 距上次说话只有 140 秒，不该催。
+    expect(h.sentTexts).toEqual(['先看一眼'])
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(h.sentTexts).toHaveLength(2)
+    vi.useRealTimers()
+  })
+
+  it('回合结束就撤掉看门狗：turn/end 之后不会凭空冒一句', async () => {
+    const h = setup()
+    h.tracker.onTurnStart('private:10001', h.chat)
     h.tracker.onTurnEnd('private:10001', h.chat)
-    await h.settle()
-    const card = h.sentTexts[h.sentTexts.length - 1]
-    expect(card).toContain('好的，我查一下。')
-    expect(card).not.toContain('<user_message')
-    expect(card).not.toContain('qq=')
-    expect(card).not.toContain('nickname')
-    expect(card).not.toContain('帮我看下今天天气')
-    expect(card).not.toContain('2.')
+    await vi.advanceTimersByTimeAsync(200_000)
+    expect(h.sentTexts).toEqual([])
+    vi.useRealTimers()
+  })
+
+  it('中间消息关掉时连兜底也不发：整套跟着开关走', async () => {
+    const h = setup({ interim: false })
+    h.tracker.onTurnStart('private:10001', h.chat)
+    for (let i = 0; i < 3; i += 1) {
+      h.tracker.onAssistantMessage('private:10001', h.chat, { id: 'tool' + i, content: [{ type: 'tool-call', id: 'c', name: 'bash', arguments: '{}' }] } as never)
+    }
+    await vi.advanceTimersByTimeAsync(200_000)
+    expect(h.sentTexts).toEqual([])
+    vi.useRealTimers()
+  })
+
+  it('同一个回合最多催三次，之后彻底安静（2026-11-24 晚：150 秒一次、上限 3 次）', async () => {
+    const h = setup()
+    h.tracker.onTurnStart('private:10001', h.chat)
+    for (let i = 0; i < 15; i += 1) {
+      await vi.advanceTimersByTimeAsync(150_000)
+    }
+    expect(h.sentTexts).toHaveLength(3)
+    vi.useRealTimers()
+  })
+
+  it('两次催的话不一样：话术池随机且不连用同一句（2026-11-24 主人：太死板了）', async () => {
+    const h = setup()
+    h.tracker.onTurnStart('private:10001', h.chat)
+    h.tracker.onAssistantMessage('private:10001', h.chat, {
+      id: 'tool0',
+      content: [{ type: 'tool-call', id: 'c', name: 'read', arguments: '{}' }],
+    } as never)
+    await vi.advanceTimersByTimeAsync(150_000)
+    await vi.advanceTimersByTimeAsync(150_000)
+    expect(h.sentTexts).toHaveLength(2)
+    expect(h.sentTexts[0]).toContain('看文件')
+    expect(h.sentTexts[1]).toContain('看文件')
+    expect(h.sentTexts[0]).not.toBe(h.sentTexts[1])
+    vi.useRealTimers()
+  })
+
+  it('接了会话模型就直接用它写的话（不再套话术池）（2026-11-24 主人：不能你自己想回啥回啥么）', async () => {
+    const h = makeHarness({
+      generateText: async () => '这个测试跑一半了，我再盯两眼',
+    })
+    vi.useFakeTimers()
+    h.tracker.onTurnStart('private:10001', h.chat)
+    h.tracker.onAssistantMessage('private:10001', h.chat, {
+      id: 'tool0',
+      content: [{ type: 'tool-call', id: 'c', name: 'bash', arguments: '{}' }],
+    } as never)
+    await vi.advanceTimersByTimeAsync(150_000)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(h.prompts).toHaveLength(1)
+    expect(h.prompts[0]).toContain('跑命令')
+    expect(h.sentTexts).toEqual(['这个测试跑一半了，我再盯两眼'])
+    vi.useRealTimers()
+  })
+
+  it('模型写崩了 / 返回空串 / 太长 → 回落到话术池，不能让对面没动静', async () => {
+    for (const bad of [async () => { throw new Error('model down') }, async () => '', async () => '太长了'.repeat(60)]) {
+      const h = makeHarness({ generateText: bad })
+      vi.useFakeTimers()
+      h.tracker.onTurnStart('private:10001', h.chat)
+      h.tracker.onAssistantMessage('private:10001', h.chat, {
+        id: 'tool0',
+        content: [{ type: 'tool-call', id: 'c', name: 'read', arguments: '{}' }],
+      } as never)
+      await vi.advanceTimersByTimeAsync(150_000)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(h.sentTexts).toHaveLength(1)
+      expect(h.sentTexts[0]).toContain('看文件')
+      vi.useRealTimers()
+    }
   })
 })
 
-describe('2026-11-23 voice-turn final dedupe', () => {
+describe('2026-11-24 语音条回合的正文去重', () => {
   const drive = async (opts: { interim?: boolean; voiceTurn: boolean; voiceSent: boolean }) => {
     const h = makeHarness({ interim: opts.interim ?? false })
     h.chat.turnFormVoice = opts.voiceTurn
@@ -293,19 +366,19 @@ describe('2026-11-23 voice-turn final dedupe', () => {
     return h.sentTexts
   }
 
-  it('drops the final text when the turn rolled a voice clip and one was sent (instant mode)', async () => {
+  it('命中语音条且真发出了语音 → 正文不发（instant 模式）', async () => {
     expect(await drive({ voiceTurn: true, voiceSent: true })).toEqual([])
   })
 
-  it('drops the final text in interim mode too', async () => {
+  it('命中语音条且真发出了语音 → 正文不发（interim 模式）', async () => {
     expect(await drive({ interim: true, voiceTurn: true, voiceSent: true })).toEqual([])
   })
 
-  it('keeps the final text when the voice clip never went out', async () => {
+  it('命中语音条但没发语音 → 正文照发，别让那轮彻底没声', async () => {
     expect(await drive({ voiceTurn: true, voiceSent: false })).toEqual(['那就这样'])
   })
 
-  it('keeps the final text on an ordinary (non-voice) turn', async () => {
+  it('普通回合（没命中语音条）→ 正文照发', async () => {
     expect(await drive({ voiceTurn: false, voiceSent: true })).toEqual(['那就这样'])
   })
 })

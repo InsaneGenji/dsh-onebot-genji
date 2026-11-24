@@ -95,7 +95,7 @@ describe('interim tracker', () => {
     await connection.stop()
   })
 
-  it('merges ≥2 interim messages into one forward and recalls the originals at turn/end', async () => {
+  it('keeps ≥2 interims on screen at turn/end and only appends the final text', async () => {
     const ctx = new Context()
     const sessionIds: string[] = []
     const captured = { followups: [] as Array<{ text: string; sessionId: string }> }
@@ -182,27 +182,15 @@ describe('interim tracker', () => {
     })
     ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
 
-    // Settlement: one t2i summary image card first (all interims), then the
-    // originals recalled immediately, then the final text. No merged-forward.
-    await vi.waitFor(() => {
-      expect(outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toBe(true)
-    })
-    const summaryIdx = outbound.findIndex(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))
-
-    // Final text delivered after the summary card.
+    // Settlement（2026-11-24 起）：中间消息留在聊天里，不发小结卡、不撤回，
+    // 只有最终答复跟在后面。
     await vi.waitFor(() => {
       expect(outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('第三步'))).toBe(true)
     })
-    const finalIdx = outbound.findIndex(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('第三步'))
-    expect(finalIdx).toBeGreaterThan(summaryIdx)
     expect(outbound.some(f => f.action === 'send_private_forward_msg')).toBe(false)
-
-    // Originals recalled immediately (after the summary card).
-    await vi.waitFor(() => {
-      expect(outbound.filter(f => f.action === 'delete_msg')).toHaveLength(2)
-    })
-    const delIdx = outbound.findIndex(f => f.action === 'delete_msg')
-    expect(delIdx).toBeGreaterThan(summaryIdx)
+    expect(outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toBe(false)
+    await new Promise(resolve => setTimeout(resolve, 150))
+    expect(outbound.some(f => f.action === 'delete_msg')).toBe(false)
 
     client.close()
     await bridge.stop()
@@ -293,14 +281,11 @@ describe('interim tracker', () => {
       expect(outbound.filter(f => f.action === 'send_msg')).toHaveLength(2)
     })
     ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
-    // No merged forward: a t2i summary image plus immediate recalls instead.
-    await vi.waitFor(() => {
-      expect(outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toBe(true)
-    })
+    // 2026-11-24 起：不发小结卡、不撤回原消息。
+    await new Promise(resolve => setTimeout(resolve, 200))
     expect(outbound.filter(f => f.action === 'send_private_forward_msg')).toHaveLength(0)
-    await vi.waitFor(() => {
-      expect(outbound.filter(f => f.action === 'delete_msg')).toHaveLength(2)
-    })
+    expect(outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toBe(false)
+    expect(outbound.some(f => f.action === 'delete_msg')).toBe(false)
 
     client.close()
     await bridge.stop()
@@ -487,61 +472,51 @@ describe('interim tracker', () => {
     await connection.stop()
   })
 
-  it('prunes recalledInterimIds at turn/start; the skip logic survives the prune (B8)', async () => {
-    const h = await makeCmdHarness({ interimRecallMs: 40 })
+  it('keeps interim messages across turns: no auto-recall timer, no recall at turn/end (2026-11-24)', async () => {
+    const h = await makeCmdHarness({})
     h.sendText('开始长任务')
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     const session = { id: h.sessionIds[0] }
-    const chat = (h.bridge as unknown as { chats: Map<string, { recalledInterimIds: Set<string> }> }).chats.get('private:10001')!
 
-    // Turn 1: a tool-carrying interim goes out live and its 40ms timer revokes
-    // it — the id lands in recalledInterimIds.
+    // Turn 1: a tool-carrying interim goes out live and stays there.
     h.ctx.emit('session/event', session as never, makeEvent('assistant/message', {
-      turn: 1, step: 1, message: { role: 'assistant', id: 'im-prune-1', content: [
+      turn: 1, step: 1, message: { role: 'assistant', id: 'im-keep-1', content: [
         { type: 'text', text: '第一步：查资料' },
         { type: 'tool-call', id: 'call-1', name: 'bash', arguments: '{}' },
       ] },
     }))
-    await vi.waitFor(() => expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(true))
-    expect(chat.recalledInterimIds.has('7')).toBe(true)
-
-    // turn/end: the immediate recall skips the already-revoked id — no second
-    // delete_msg for the same message id.
-    h.ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
     await vi.waitFor(() => {
-      expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toBe(true)
+      expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('第一步'))).toBe(true)
     })
-    await new Promise(resolve => setTimeout(resolve, 100))
-    expect(h.outbound.filter(f => f.action === 'delete_msg')).toHaveLength(1)
+    await new Promise(resolve => setTimeout(resolve, 150))
+    expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(false)
 
-    // The next turn starts: the previous turn's residue is pruned.
+    h.ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
+    await new Promise(resolve => setTimeout(resolve, 150))
+    expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(false)
+
+    // Turn 2: same id reused by the echo responder — still nothing revoked.
     h.ctx.emit('session/event', session as never, makeEvent('turn/start', { turn: 2 }))
-    expect(chat.recalledInterimIds.size).toBe(0)
-
-    // Same id again (the echo responder reuses 7): the new interim auto-recalls
-    // and its turn/end recall skips it exactly as before — pruning did not
-    // break the skip logic, and the reused id leaves no stale behavior.
     h.ctx.emit('session/event', session as never, makeEvent('assistant/message', {
-      turn: 2, step: 1, message: { role: 'assistant', id: 'im-prune-2', content: [
+      turn: 2, step: 1, message: { role: 'assistant', id: 'im-keep-2', content: [
         { type: 'text', text: '第二步：总结' },
         { type: 'tool-call', id: 'call-1', name: 'bash', arguments: '{}' },
       ] },
     }))
-    await vi.waitFor(() => expect(h.outbound.filter(f => f.action === 'delete_msg')).toHaveLength(2))
-    expect(chat.recalledInterimIds.has('7')).toBe(true)
-    h.ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 2, reason: { kind: 'completed' } }))
     await vi.waitFor(() => {
-      expect(h.outbound.filter(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toHaveLength(2)
+      expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('第二步'))).toBe(true)
     })
-    await new Promise(resolve => setTimeout(resolve, 100))
-    expect(h.outbound.filter(f => f.action === 'delete_msg')).toHaveLength(2)
+    h.ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 2, reason: { kind: 'completed' } }))
+    await new Promise(resolve => setTimeout(resolve, 200))
+    expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(false)
+    expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toBe(false)
 
     h.client.close()
     await h.bridge.stop()
     await h.connection.stop()
   }, 30_000)
 
-  it('sends one 104-char interim as a single QQ message with one recall and a one-line, contiguously numbered summary card', async () => {
+  it('sends one 104-char interim as a single QQ message and leaves it on screen at turn/end', async () => {
     const ctx = new Context()
     const sessionIds: string[] = []
     const captured = { followups: [] as Array<{ text: string; sessionId: string }> }
@@ -615,10 +590,7 @@ describe('interim tracker', () => {
     const session = { id: sessionIds[0] }
 
     // One tool-carrying interim of 104 chars: the whole body goes out as one
-    // QQ message (one id), and the pre-fix bug
-    // expanded the single buffer entry into two verbatim-identical summary
-    // lines. maxImageBytes=500 forces the summary card down the PNG-overflow
-    // text fallback so the rendered body is directly assertable.
+    // QQ message (one id)。
     const text = '第一步：已经读取了配置文件并确认了所有参数都符合预期。' +
       '第二步：正在把改动应用到工作树并且没有遇到任何冲突。' +
       '第三步：还剩最后的验证步骤就可以提交最终结论了。' +
@@ -629,12 +601,9 @@ describe('interim tracker', () => {
         { type: 'tool-call', id: 'call-1', name: 'bash', arguments: '{}' },
       ] },
     }))
-    // 正文自动切气泡（issue #6）：104 字按句末标点切成 4 条独立消息，条间有
-    // 800–1500ms 停顿，所以先等整批发完、再把各条的文本拼回原文做断言。
-    // 2026-11-22 起每条气泡末尾的「。」会被剥掉（主人要求聊天里不挂句号）；
-    // 2026-11-24 起普通正文上限 3 条，这里 4 句会把第 3、4 句 join(' ') 成一条，
-    // 中间那个「。」就留在气泡内部了（只剥末尾）。断言：字全在、顺序对、没重复，
-    // 并且最后一条结尾确实没有「」。
+    // 正文自动切气泡（issue #6）：2026-11-24 主人删掉「遇到句末标点就分条」
+    // 之后，这段 104 字内部虽然有四个句号，但没有换行、没有列表项，所以整段
+    // 就是一条消息（旧规则下会被切成 4 条）。末尾的「。」仍会被剥掉。
     const flatten = (s: string): string => s.replace(/\s+/gu, '')
     const expected = flatten(text).replace(/。/gu, '')
     await vi.waitFor(() => {
@@ -643,31 +612,23 @@ describe('interim tracker', () => {
       expect(joined.trimEnd().endsWith('。')).toBe(false)
     }, { timeout: 10_000 })
     const liveFrames = outbound.filter(f => f.action === 'send_msg')
-    expect(liveFrames.length).toBeGreaterThan(1)
+    expect(liveFrames).toHaveLength(1)
 
     const at = outbound.length
     ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
-    await vi.waitFor(() => {
-      expect(outbound.filter(f => f.action === 'delete_msg')).toHaveLength(liveFrames.length)
-    }, { timeout: 15_000 })
-
-    // Summary body: the full text appears exactly once, numbering stays
-    // contiguous (no orphan "2." line from the empty-text sibling entry).
-    // 2026-11-24：卡片是一整条，只有末尾的「。」被剥，句中的「。」留在里面，
-    // 所以这里跟 flatten 后的原文比（忽略空白和句号）。
-    const summary = outbound.slice(at).filter(f => f.action === 'send_msg').map(textOf).join('')
-    expect(flatten(summary).replace(/。/gu, '')).toBe(flatten('1. ' + expected))
-    // Recall intact: every bubble of the interim is revoked.
-    const liveIds = echoed.filter(e => e.action === 'send_msg').slice(0, liveFrames.length).map(e => e.id)
-    expect(outbound.filter(f => f.action === 'delete_msg').map(f => (f.params as { message_id: string }).message_id).sort())
-      .toEqual(liveIds.sort())
+    // 2026-11-24 起：中间消息留在聊天里，回合末不撤回、也不发小结卡。
+    await new Promise(resolve => setTimeout(resolve, 200))
+    expect(outbound.some(f => f.action === 'delete_msg')).toBe(false)
+    expect(outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toBe(false)
+    // 渲染整段只发了一条。
+    expect(outbound.filter(f => f.action === 'send_msg')).toHaveLength(liveFrames.length)
 
     client.close()
     await bridge.stop()
     await connection.stop()
   }, 30_000)
 
-  it('keeps one summary line when an interim carries a [[qq_forward]] block plus body (forward fake id still recalls)', async () => {
+  it('keeps a [[qq_forward]] block interim plus body on screen at turn/end (no card, no recall)', async () => {
     const ctx = new Context()
     const sessionIds: string[] = []
     const captured = { followups: [] as Array<{ text: string; sessionId: string }> }
@@ -764,23 +725,12 @@ describe('interim tracker', () => {
       .toEqual([{ name: '资料卡片', content: '这是查到的资料内容。' }])
     expect(outbound.filter(f => f.action === 'send_msg').map(textOf)).toEqual(['正文结论如下'])
 
-    const at = outbound.length
     ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
-    await vi.waitFor(() => {
-      expect(outbound.filter(f => f.action === 'delete_msg')).toHaveLength(2)
-    })
-
-    // Summary body (PNG-overflow text fallback re-extracts the marker): the
-    // node content appears exactly once and the line numbering stays contiguous.
-    const postFwd = outbound.slice(at).filter(f => f.action === 'send_private_forward_msg')
-    expect(postFwd).toHaveLength(1)
-    expect(nodesOf(postFwd[0]!)).toEqual([{ name: '资料卡片', content: '这是查到的资料内容。' }])
-    const summary = outbound.slice(at).filter(f => f.action === 'send_msg').map(textOf).join('')
-    expect(summary).toBe('1. 正文结论如下')
-    // Recall intact: the fake forward id and the real body id both revoked.
-    const bodyId = echoed.filter(e => e.action === 'send_msg').slice(0, 1).map(e => e.id)
-    expect(outbound.filter(f => f.action === 'delete_msg').map(f => (f.params as { message_id: string }).message_id).sort())
-      .toEqual([...bodyId, 'forward'].sort())
+    // 2026-11-24 起：回合末不再发小结卡、也不再撤回原消息（forward 块和正文都留在原处）。
+    await new Promise(resolve => setTimeout(resolve, 200))
+    expect(outbound.some(f => f.action === 'delete_msg')).toBe(false)
+    expect(outbound.filter(f => f.action === 'send_private_forward_msg')).toHaveLength(1)
+    expect(outbound.filter(f => f.action === 'send_msg').map(textOf)).toEqual(['正文结论如下'])
 
     client.close()
     await bridge.stop()
@@ -788,70 +738,9 @@ describe('interim tracker', () => {
   })
 })
 
-describe('interimRecall=false degrade switch (M3-D2b): send-only interims', () => {
-  it('sends interims live but never recalls: no auto-recall timer, no turn/end card, no delete_msg', async () => {
-    const h = await makeCmdHarness({ interimRecallMs: 40, interimRecall: false })
-    h.sendText('开始长任务')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
-    const session = { id: h.sessionIds[0] }
-    // A tool-carrying interim goes out live as usual…
-    h.ctx.emit('session/event', session as never, makeEvent('assistant/message', {
-      turn: 1, step: 1, message: { role: 'assistant', id: 'dr-1', content: [
-        { type: 'text', text: '第一步：查资料' },
-        { type: 'tool-call', id: 'call-1', name: 'bash', arguments: '{}' },
-      ] },
-    }))
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('第一步'))).toBe(true)
-    })
-    // …but its 40ms auto-recall window elapses while the turn runs: nothing revoked.
-    await new Promise(resolve => setTimeout(resolve, 150))
-    expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(false)
-    h.ctx.emit('session/event', session as never, makeEvent('assistant/message', {
-      turn: 1, step: 2, message: { role: 'assistant', id: 'dr-2', content: [{ type: 'text', text: '最终结论' }] },
-    }))
-    h.ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
-    // Settlement sends the final only: no summary card, no immediate recall.
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('最终结论'))).toBe(true)
-    })
-    expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toBe(false)
-    await new Promise(resolve => setTimeout(resolve, 100))
-    expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(false)
-    h.client.close()
-    await h.bridge.stop()
-    await h.connection.stop()
-  }, 30_000)
-
-  it('keeps every step live and ends the turn with only the final (deferred path, no card/recall)', async () => {
-    const h = await makeCmdHarness({ interimRecall: false })
-    h.sendText('开始长任务')
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
-    const session = { id: h.sessionIds[0] }
-    h.ctx.emit('session/event', session as never, makeEvent('assistant/message', {
-      turn: 1, step: 1, message: { role: 'assistant', id: 'dr-3', content: [{ type: 'text', text: '中间评论一' }] },
-    }))
-    h.ctx.emit('session/event', session as never, makeEvent('assistant/message', {
-      turn: 1, step: 2, message: { role: 'assistant', id: 'dr-4', content: [{ type: 'text', text: '中间评论二' }] },
-    }))
-    // Step 1 flushes as interim when step 2 proves it; step 2 stays deferred.
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('中间评论一'))).toBe(true)
-    })
-    expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('中间评论二'))).toBe(false)
-    h.ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('中间评论二'))).toBe(true)
-    })
-    expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toBe(false)
-    expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(false)
-    h.client.close()
-    await h.bridge.stop()
-    await h.connection.stop()
-  }, 30_000)
-
-  it('combines with interimMessages=false: pure instant mode — exactly one final send', async () => {
-    const h = await makeCmdHarness({ interimMessages: false, interimRecall: false })
+describe('interimMessages=false: pure instant mode', () => {
+  it('sends exactly one final, no card, no recall', async () => {
+    const h = await makeCmdHarness({ interimMessages: false })
     h.sendText('你好')
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     const session = { id: h.sessionIds[0] }

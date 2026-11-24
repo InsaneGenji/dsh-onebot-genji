@@ -272,8 +272,6 @@ export async function makeCmdHarness(opts?: {
   ocrResult?: unknown
   interimMessages?: boolean
   unknownCommand?: 'intercept' | 'passthrough'
-  interimRecallMs?: number
-  interimRecall?: boolean
   rateLimitPerMinute?: number
   restrictedMemberPrefix?: boolean
   newMessagePolicy?: 'queue' | 'steer'
@@ -346,8 +344,6 @@ export async function makeCmdHarness(opts?: {
       botQQ: '10002', ignoreSelf: false, requireMention: opts?.requireMention ?? true,
       interimMessages: opts?.interimMessages ?? true,
       ...(opts?.unknownCommand !== undefined ? { unknownCommand: opts.unknownCommand } : {}),
-      ...(opts?.interimRecallMs !== undefined ? { interimRecallMs: opts.interimRecallMs } : {}),
-      ...(opts?.interimRecall !== undefined ? { interimRecall: opts.interimRecall } : {}),
       ...(opts?.rateLimitPerMinute !== undefined ? { rateLimitPerMinute: opts.rateLimitPerMinute } : {}),
       sendErrorNotice: true,
       // T8: auto-receipt notice override (absent = both on).

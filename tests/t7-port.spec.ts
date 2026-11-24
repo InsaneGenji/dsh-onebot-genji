@@ -1,4 +1,4 @@
-﻿/**
+/**
  * T7 (PR port 入站连发合并) 测试：
  *  - 单元侧：InboundScheduler 合并窗口/最长等待/超限丢弃/斜杠命令直通/
  *    注入直通/每会话串行链/stop 清理/合成事件 mid=最后一条；
@@ -284,9 +284,11 @@ describe('T7 设置键：inboxQueueEnabled/inboxQueueDelayMs', () => {
     expect(() => validatePatch({ inboxQueueEnabled: 'yes' })).toThrow()
   })
 
-  it('behavior 组键序：deferredTimeoutMs 之后追加两键（0.10.0 重排后组尾再续 ignoreSelf/sidebarEntryEnabled；11.19 掷骰四键紧跟 rateLimitPerMinute、9 键 proactive 在组尾（2026-11-22 删补话五键））', () => {
+  it('behavior 组键序：入站连发合并两项在最前、中间消息在通知段之前（2026-11-24 主人点名；11.19 掷骰四键紧跟 rateLimitPerMinute、9 键 proactive 在组尾）', () => {
+    // 2026-11-24：入站连发合并挪到「每分钟消息频率上限」上面。
+    expect(SETTINGS_GROUPS.behavior.slice(0, 2)).toEqual(['inboxQueueEnabled', 'inboxQueueDelayMs'])
     // 2026-11-19：回合形式掷骰的四个键紧跟在 rateLimitPerMinute 后面。
-    expect(SETTINGS_GROUPS.behavior.slice(5, 10)).toEqual([
+    expect(SETTINGS_GROUPS.behavior.slice(2, 7)).toEqual([
       'rateLimitPerMinute', 'voiceReplyEnabled', 'voiceReplyProb', 'stickerReplyEnabled', 'stickerReplyProb',
     ])
     // 主动搭话 9 个扁平 proactiveXxx 落在组尾。
@@ -295,7 +297,8 @@ describe('T7 设置键：inboxQueueEnabled/inboxQueueDelayMs', () => {
       'proactiveMaxPerDay', 'proactiveQuietFrom', 'proactiveQuietTo', 'proactiveAttemptGapMinutes',
       'proactiveBurstProb',
     ])
-    expect(SETTINGS_GROUPS.behavior.slice(-14, -9)).toEqual(['inboxQueueEnabled', 'inboxQueueDelayMs', 'titleSyncEnabled', 'ignoreSelf', 'sidebarEntryEnabled'])
-    expect(SETTINGS_GROUPS.behavior.slice(-16, -14)).toEqual(['autoSteerPolicy', 'deferredTimeoutMs'])
+    // 2026-11-24：中间消息在 titleSyncEnabled/ignoreSelf/sidebarEntryEnabled 之前。
+    expect(SETTINGS_GROUPS.behavior.slice(-13, -12)).toEqual(['interimMessages'])
+    expect(SETTINGS_GROUPS.behavior.slice(-12, -9)).toEqual(['titleSyncEnabled', 'ignoreSelf', 'sidebarEntryEnabled'])
   })
 })

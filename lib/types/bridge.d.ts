@@ -55,14 +55,6 @@ export interface BridgeConfig {
      * the old fall-through to the model. */
     unknownCommand?: 'intercept' | 'passthrough';
     interimMessages: boolean;
-    /** Per-interim auto-recall delay (ms) from each interim's send completion
-     * while the turn is still running (QQ recall window ~2 min); absent → 90s.
-     * At turn/end the remaining originals are recalled immediately regardless. */
-    interimRecallMs?: number;
-    /** M3-D2b degrade switch: false = send-only interims — no auto-recall
-     * timers, no turn/end immediate recall and no summary card (the turn ends
-     * with the final text only). Absent/true = the full recall behavior. */
-    interimRecall?: boolean;
     sendErrorNotice: boolean;
     /** T8/#27: auto-receipt notice switches / custom texts — absent or `true`
      * → the default text (0.9.x behavior unchanged); `false` or `''` → not
@@ -314,6 +306,11 @@ export interface BridgeDeps {
     agents: AgentRegistry;
     sessions: SessionStore;
     agentPresets: AgentPresetsLike | undefined;
+    /** 中间消息静默兜底借用的一条纯文本生成通道（当前会话模型）。缺省时兜底
+     *  回落到写死的话术池；index.ts 里传的就是主动搭话那条 generateText。 */
+    generateText?: ((prompt: string, options?: {
+        signal?: AbortSignal;
+    }) => Promise<string>) | undefined;
     /** Host command runtime: forwards /plan and /permission so QQ reaches the
      * native commands. dsh ≥0.1.5-rc.1: `submittedAttachments` (always pass an
      * empty array) and `signal` are both REQUIRED (the host reads `.length` /

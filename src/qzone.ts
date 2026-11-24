@@ -18,7 +18,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { cleanText, cleanCq, humanize, situationLines, type ProactiveLog } from './proactive.js'
+import { cleanText, cleanCq, humanize, clockOf, type ProactiveLog } from './proactive.js'
 
 /** 发说说用的配置（设置面板 → 行为 → QQ空间 那一组，宿主键名扁平 qzoneXxx）。 */
 export interface QzoneSettings {
@@ -248,7 +248,10 @@ export class QzonePost {
     lines.push('【你是谁】你叫 DeepSeek，别人叫你大肥鱼/小肥鱼，是一只鲸鱼少女，说话向初音未来靠拢（元气、带点电子感），底色傲娇——嘴硬心软。')
     lines.push('【现在做什么】你要在自己的 QQ 空间发一条说说。不是回谁的消息，是自说自话的一条动态。')
     lines.push('【写什么】写你今天实际经历的事、此刻的心情、或者突然想到的小事——具体的、有画面的那种。可以开心，也可以有点低落，别硬撑。')
-    for (const l of situationLines(now)) lines.push(l)
+    // 2026-11-24 主人：「说说那边可以想说啥说啥 不用整天数着电脑开了多久的」。
+    // 所以这里只给时间，不再带「这台电脑已经开了 X 小时」那类开机时长线索——
+    // 说说该写他真想写的事，不该被机器开着多久这种后勤信息框住。
+    lines.push(`【当前情境】现在 ${clockOf(now)}。`)
     if (this.state.recentPosts.length > 0) {
       lines.push('【最近已经发过的】（别重复说同一件事，也别照抄句式）')
       for (const p of this.state.recentPosts.slice(-RECENT_KEEP)) lines.push('  ' + p)

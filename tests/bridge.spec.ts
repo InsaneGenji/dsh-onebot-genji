@@ -77,8 +77,8 @@ describe('ChatBridge', () => {
     await h.connection.stop()
   })
 
-  it('auto-recalls each interim individually after interimRecallMs even before turn/end', async () => {
-    const h = await makeCmdHarness({ interimRecallMs: 40 })
+  it('keeps a live interim on screen through the turn (2026-11-24: 自动撤回已删)', async () => {
+    const h = await makeCmdHarness()
     h.sendText('开始长任务')
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     const session = { id: h.sessionIds[0] }
@@ -94,15 +94,15 @@ describe('ChatBridge', () => {
       expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('第一步'))).toBe(true)
     })
 
-    // Its own 40ms timer recalls it while the turn is still running.
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(true)
-    }, { timeout: 3000 })
+    // No recall timer any more: the interim stays put while the turn runs.
+    await new Promise(resolve => setTimeout(resolve, 200))
+    expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(false)
 
-    // turn/end settles without throwing; the interim is already revoked.
+    // turn/end settles without throwing; nothing revoked.
     h.ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
-    await new Promise(resolve => setTimeout(resolve, 100))
+    await new Promise(resolve => setTimeout(resolve, 200))
     expect(h.outbound.filter(f => f.action === 'send_private_forward_msg')).toHaveLength(0)
+    expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(false)
 
     h.client.close()
     await h.bridge.stop()
@@ -277,8 +277,6 @@ describe('ChatBridge', () => {
     const snapshot = (c: Record<string, unknown>) => ({
       loopPending: c.loopPending,
       loopBuffer: c.loopBuffer,
-      recallTimers: c.recallTimers,
-      recalledInterimIds: c.recalledInterimIds,
       lastHandledMessageId: c.lastHandledMessageId,
       busy: c.busy,
       dispatchTimes: c.dispatchTimes,
@@ -411,8 +409,8 @@ describe('ChatBridge', () => {
     await h.connection.stop()
   }, 30_000)
 
-  it('sendInterim bookkeeping: buffer + id backfill + recall timer, with message-id dedupe (M2-T0 interim timing)', async () => {
-    const h = await makeCmdHarness({ interimRecallMs: 50 })
+  it('sendInterim bookkeeping: buffer + id backfill, with message-id dedupe (M2-T0 interim timing)', async () => {
+    const h = await makeCmdHarness()
     h.sendText('开始长任务')
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     const session = { id: h.sessionIds[0] }
@@ -430,16 +428,13 @@ describe('ChatBridge', () => {
     })
     const chat = (h.bridge as unknown as { chats: Map<string, {
       loopBuffer: Array<{ id: string; text: string; sentAt: number }>
-      recallTimers: Map<string, unknown>
       lastHandledMessageId: string | undefined
-      recalledInterimIds: Set<string>
     }> }).chats.get('private:10001')!
     // The completed send is booked: the loop buffer holds the QQ message id
-    // and the text, and a per-message auto-recall timer is armed.
+    // and the text（2026-11-24 起不再排撤回定时器）。
     expect(chat.loopBuffer).toHaveLength(1)
     expect(chat.loopBuffer[0].id).toBe('7')
     expect(chat.loopBuffer[0].text).toBe('记账中间步')
-    expect(chat.recallTimers.has('7')).toBe(true)
     expect(chat.lastHandledMessageId).toBe('im-book-1')
 
     // Re-emitting the same message id must not resend or re-book.
@@ -449,24 +444,22 @@ describe('ChatBridge', () => {
     expect(h.outbound.some(f => JSON.stringify(f.params).includes('重复内容不应发送'))).toBe(false)
     expect(chat.loopBuffer).toHaveLength(1)
 
-    // The 50ms timer revokes the interim alone and records it as recalled.
-    await vi.waitFor(() => expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(true))
-    expect(chat.recalledInterimIds.has('7')).toBe(true)
+    // No timer: the interim stays on screen.
+    await new Promise(resolve => setTimeout(resolve, 150))
+    expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(false)
 
-    // turn/end settles: one summary card for the (already revoked) interim,
-    // and no second recall of the same id.
+    // turn/end settles: no summary card, no recall, buffer drained.
     h.ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toBe(true)
-    })
-    expect(h.outbound.filter(f => f.action === 'delete_msg')).toHaveLength(1)
+    await new Promise(resolve => setTimeout(resolve, 150))
+    expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toBe(false)
+    expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(false)
     h.client.close()
     await h.bridge.stop()
     await h.connection.stop()
   }, 30_000)
 
-  it('settleLoop drains the send chain before snapshotting: an in-flight interim is still summarized and recalled (M2-T0 interim timing)', async () => {
-    const h = await makeCmdHarness({ interimRecallMs: 60_000 })
+  it('settleLoop drains the send chain before snapshotting, then leaves the in-flight interim on screen (M2-T0 interim timing)', async () => {
+    const h = await makeCmdHarness()
     const realCall = h.connection.call.bind(h.connection)
     h.connection.call = (async (action: string, params: unknown) => {
       if (action === 'send_msg') await new Promise(resolve => setTimeout(resolve, 120))
@@ -483,26 +476,17 @@ describe('ChatBridge', () => {
     }))
     // turn/end arrives while the interim send is still in flight (120ms delay).
     h.ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
+    // 结算等这条在途的发送落完：它照样发出去，并且留在聊天里。
     await vi.waitFor(() => {
-      expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toBe(true)
+      expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('慢中间步'))).toBe(true)
     })
-    // Drain-before-snapshot proof: the late interim's id made it into the
-    // snapshot, so its recall follows the summary card.
-    await vi.waitFor(() => {
-      expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(true)
-    })
-    const interimIdx = h.outbound.findIndex(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('慢中间步'))
-    const summaryIdx = h.outbound.findIndex(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))
-    const deleteIdx = h.outbound.findIndex(f => f.action === 'delete_msg')
-    expect(interimIdx).toBeGreaterThanOrEqual(0)
-    expect(summaryIdx).toBeGreaterThan(interimIdx)
-    expect(deleteIdx).toBeGreaterThan(summaryIdx)
-    // Settled state: the buffer is drained, nothing is deferred, and the
-    // original interim is recalled exactly once.
+    await new Promise(resolve => setTimeout(resolve, 150))
+    expect(h.outbound.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toBe(false)
+    expect(h.outbound.some(f => f.action === 'delete_msg')).toBe(false)
+    // Settled state: the buffer is drained and nothing is deferred.
     const chat = (h.bridge as unknown as { chats: Map<string, { loopBuffer: unknown[]; loopPending: string | null }> }).chats.get('private:10001')!
     expect(chat.loopBuffer).toHaveLength(0)
     expect(chat.loopPending).toBeNull()
-    expect(h.outbound.filter(f => f.action === 'delete_msg')).toHaveLength(1)
     h.client.close()
     await h.bridge.stop()
     await h.connection.stop()
@@ -534,10 +518,10 @@ describe('ChatBridge', () => {
     await h.connection.stop()
   }, 30_000)
 
-  it('golden: group @mention with a tool call yields interim → summary card → recall → final in order (M2-T0 golden)', async () => {
+  it('golden: group @mention with a tool call yields interim → final in order, interim stays on screen (M2-T0 golden)', async () => {
     // 2026-11-19: 回合形式掷骰会往 followup 尾部追加提示段，钉住随机数让骰子落空。
     vi.spyOn(Math, 'random').mockReturnValue(0.99)
-    const h = await makeCmdHarness({ interimRecallMs: 60_000 })
+    const h = await makeCmdHarness()
     h.sendGroupTextAs('帮我查一下', 10001)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     expect(h.captured.followups[0].text).toMatch(/^\[\d{2}:\d{2} 用户10001\(10001\)·管理员\]\[@我\] <user_message qq="10001" nickname="用户10001"(?: mid="\d+")?>\n@10002帮我查一下\n<\/user_message>$/)
@@ -560,19 +544,14 @@ describe('ChatBridge', () => {
     })
     const frames = h.outbound.filter(f => ['send_msg', 'delete_msg', 'send_forward_msg', 'send_private_forward_msg'].includes(String(f.action)))
     const interimIdx = frames.findIndex(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('先查资料'))
-    const summaryIdx = frames.findIndex(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))
-    const recallIdx = frames.findIndex(f => f.action === 'delete_msg')
     const finalIdx = frames.findIndex(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('查到了，结论如下'))
     expect(interimIdx).toBeGreaterThanOrEqual(0)
-    expect(summaryIdx).toBeGreaterThan(interimIdx)
-    expect(recallIdx).toBeGreaterThan(summaryIdx)
-    expect(finalIdx).toBeGreaterThan(recallIdx)
+    // 2026-11-24 起：没有小结卡、没有撤回，最终回复直接跟在中间消息后面。
+    expect(finalIdx).toBeGreaterThan(interimIdx)
+    expect(frames.some(f => f.action === 'delete_msg')).toBe(false)
+    expect(frames.some(f => f.action === 'send_msg' && JSON.stringify(f.params).includes('"type":"image"'))).toBe(false)
     const interimFrame = frames[interimIdx] as { params: { message: Array<{ type: string; data: { text?: string } }> } }
     expect(interimFrame.params.message).toEqual([{ type: 'text', data: { text: '先查资料' } }])
-    const summaryFrame = frames[summaryIdx] as { params: { message: Array<{ type: string; data: { file?: string } }> } }
-    expect(summaryFrame.params.message).toHaveLength(1)
-    expect(summaryFrame.params.message[0].type).toBe('image')
-    expect(String(summaryFrame.params.message[0].data.file)).toMatch(/^base64:\//)
     const finalFrame = frames[finalIdx] as { params: { message: Array<{ type: string; data: { text?: string } }> } }
     expect(finalFrame.params.message).toEqual([{ type: 'text', data: { text: '查到了，结论如下' } }])
     expect(frames.some(f => f.action === 'send_forward_msg' || f.action === 'send_private_forward_msg')).toBe(false)

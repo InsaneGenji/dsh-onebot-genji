@@ -173,16 +173,9 @@ export interface ChatAgent {
    * next assistant/message (flushed live), else the final at turn/end.
    * M3-D2a: the former instant-mode-only pendingFinal folded in. */
   loopPending: string | null
-  /** Sent interim messages awaiting turn/end summary (text kept for the recap
-   * t2i card). `sentAt` drives the per-message auto-recall scheduled after
-   * each interim's send completes. */
+  /** 本回合发出去的中间消息（只做记账：回合内诊断 / 日志用）。
+   *  2026-11-24 起不再用于撤回和小结卡——中间消息发出去就留在聊天里。 */
   loopBuffer: Array<{ id: string; text: string; sentAt: number }>
-  /** Per-interim 90s (config interimRecallMs) auto-recall timers, keyed by
-   * message id; cleared when turn/end recalls the originals immediately. */
-  recallTimers: Map<string, ReturnType<typeof setTimeout>>
-  /** Interim message ids already auto-revoked by their 90s timer during a long
-   * turn — skipped by the turn/end immediate recall (already gone from QQ). */
-  recalledInterimIds: Set<string>
   /** Last assistant message id already handled — duplicate session events
    * (streaming/usage re-emits of the same message) must not re-send it. */
   lastHandledMessageId: string | undefined
@@ -443,8 +436,6 @@ export class ChatRegistry {
       lastActivityAt: Date.now(),
       loopPending: null,
       loopBuffer: [],
-      recallTimers: new Map(),
-      recalledInterimIds: new Set(),
       lastHandledMessageId: undefined,
       busy: false,
       dispatchTimes: [],
@@ -960,7 +951,6 @@ export class ChatRegistry {
       return
     }
     this.deps.onChatRemoved(chat)
-    this.clearInterimTimers(chat)
     this.chats.delete(chatId)
     this.bySession.delete(chat.sessionId)
     // D4b/T3: snapshot the persisted settings before the eviction clears them,
@@ -1212,7 +1202,6 @@ export class ChatRegistry {
       // it so the user can switch back later.
       this.snapshotRetainedSettings(chatId, chat.sessionId)
       this.deps.onChatRemoved(chat)
-      this.clearInterimTimers(chat)
       this.retiredSessionIds.add(chat.sessionId)
       void this.saveRetired()
       this.recordSwitchable(chatId, chat.sessionId)
@@ -1487,7 +1476,6 @@ export class ChatRegistry {
       // T3-R1 (review): the identical snapshot now also covers collision heals.
       this.snapshotRetainedSettings(chatId, chat.sessionId)
       this.deps.onChatRemoved(chat)
-      this.clearInterimTimers(chat)
       // SOFT retire (not brokenSessions): the old session's history is
       // intact, and /session must keep it switchable — the durable retired
       // record still keeps the id out of every create path (blocked union).
@@ -1529,12 +1517,6 @@ export class ChatRegistry {
     }
   }
 
-  /** Clear every pending interim auto-recall timer for a chat (dispose path). */
-  private clearInterimTimers(chat: ChatAgent): void {
-    for (const timer of chat.recallTimers.values()) clearTimeout(timer)
-    chat.recallTimers.clear()
-  }
-
   /** Stop everything registry-owned: cancel the debounce timer, save the
    * mapping, dispose every agent, clear both indexes. */
   async stop(): Promise<void> {
@@ -1545,7 +1527,6 @@ export class ChatRegistry {
     await this.saveMapping()
     for (const chat of this.chats.values()) {
       this.deps.onChatRemoved(chat)
-      this.clearInterimTimers(chat)
       try {
         await chat.dispose()
       } catch (error) {

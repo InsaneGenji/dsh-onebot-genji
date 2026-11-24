@@ -199,10 +199,6 @@ export interface Config {
   allowAllUsers: boolean
   ignoreSelf: boolean
   interimMessages: boolean
-  /** Per-interim auto-recall delay (ms) from each interim's send completion. */
-  interimRecallMs: number
-  /** M3-D2b: interim recall degrade switch (false = send-only interims). */
-  interimRecall: boolean
   sendErrorNotice: boolean
   /** T8/#27: auto-receipt notice switches — boolean, or a custom text string. */
   notices: { steerAccepted?: boolean | string, queue?: boolean | string, answerAccepted?: boolean | string, deferredTimeout?: boolean | string, rateLimited?: boolean | string }
@@ -393,9 +389,9 @@ export const Config: Z<Config> = z.object({
   unknownCommand: z.union([z.const('intercept'), z.const('passthrough')]).default('intercept')
     .description('未知斜杠命令处理：intercept（默认）=拦截并提示相近命令或 /help；passthrough=透传给模型（旧行为）'),
   newMessagePolicy: z.union([z.const('queue'), z.const('steer')]).default('steer')
-    .description('任务运行中的新消息处理策略（P1）：steer（默认）=插话——运行中收到的新普通纯文字消息作为补充指令加入当前任务（模型在下一步读取）并回复提交提示；queue=排队——新消息在当前任务结束后按序处理为后续回合，等待期间至多提示一次；图片/文件/语音/带引用消息与 [受限用户:仅问答] 消息两种模式下都按排队处理，/steer 命令两种模式下均可用'),
+    .description('任务运行中的新消息处理策略（P1）：steer（默认）=插话——运行中收到的新消息作为补充指令加入当前任务（模型在下一步读取）并回复提交提示；queue=排队——新消息在当前任务结束后按序处理为后续回合，等待期间至多提示一次；2026-11-24 起图片/引用/转发/受限群成员消息同样插话，只有 newMessagePolicy=queue 时才排队；/steer 命令两种模式下均可用'),
   autoSteerPolicy: z.union([z.const('admin'), z.const('all')]).default('admin')
-    .description('steer 模式下自动插话的发送者资格（T9-B 用户裁决 2026-10-12）：admin（默认）=仅管理员可自动插话；all=所有非受限发送者均可。不具备资格的消息按排队处理；/steer 命令始终仅管理员、不受本项影响；queue 模式行为不变'),
+    .description('steer 模式下自动插话的发送者资格（T9-B 用户裁决 2026-10-12）：admin（默认）=仅管理员可自动插话；all=所有成员均可（2026-11-24 起含带 [受限用户:仅问答] 前缀的群成员——前缀仍注入，只是不再挡插队）。不具备资格的消息按排队处理；/steer 命令始终仅管理员、不受本项影响；queue 模式行为不变'),
   deferredTimeoutMs: z.number().default(600_000)
     .description('等待模型回复超时阈值（毫秒，T3/P2 超时补发）：回合超过该时长没有任何模型输出时提示超时并登记补发跟踪，任务完成后向原聊天自动补发最终文字（走既有出站管线）；发送明确失败最多尝试 3 次（退避），结果不确定时保留记录停止自动重试；/stop 终止该聊天的补发跟踪；0=关闭超时补发'),
   inboxQueueEnabled: z.boolean().default(false)
@@ -419,11 +415,7 @@ export const Config: Z<Config> = z.object({
   sidebarEntryEnabled: z.boolean().default(true)
     .description('DSH 首页左侧边栏「QQ 机器人」入口（T11）：true（默认）=客户端在首页左侧边栏注册入口，点开即现有设置面板（与插件菜单下的设置页入口同一面板）；false=不注册侧边栏入口与配对面板（插件菜单下的设置页入口保留）。改动保存后需刷新网页生效（客户端按启动时快照决定注册，无推送通道）'),
   interimMessages: z.boolean().default(true)
-    .description('是否把模型每步（含工具调用之间的中间回复）的文本立即发出；false 则只发最终回复。true 时：中间消息实时可见、每条在 interimRecallMs 后自动单独撤回、回合结束先发一张整轮 t2i 小结卡再发最终回复'),
-  interimRecallMs: z.number().default(90_000)
-    .description('中间消息各自发送完成后多久自动单独撤回（毫秒；QQ 撤回时限约 2 分钟，建议 ≤110000）'),
-  interimRecall: z.boolean().default(false)
-    .description('中间消息撤回开关：false（默认）=只发不撤——中间消息照常实时发出但保留在聊天里：不排自动撤回定时器、回合结束不发小结卡也不撤回原消息，只发最终回复；true=每条中间消息在 interimRecallMs 后自动撤回，回合结束先发整轮 t2i 小结卡再立即撤回原消息'),
+    .description('是否把模型每步（含工具调用之间的中间回复）的文本立即发出；false 则只发最终回复。true 时：中间消息实时可见，发出后保留在聊天里（2026-11-24 起不再自动撤回、也不再发整轮小结卡），回合末照常发最终回复'),
   sendErrorNotice: z.boolean().default(false)
     .description('一轮运行出错时向用户发送 ⚠️ 错误提示'),
   notices: z.object({
@@ -490,7 +482,7 @@ export const Config: Z<Config> = z.object({
   rateLimitPerMinute: z.number().default(30)
     .description('每 chat 每分钟允许的普通消息条数上限（60 秒滑动窗口）；命令消息不计入也不受限；超限时每窗口最多提示一次；0=禁用频控'),
   restrictedMemberPrefix: z.boolean().default(true)
-    .description('群聊非管理员消息注入 [受限用户:仅问答] 前缀（软限制）'),
+    .description('群聊非管理员（且不是群主/管理）发出的消息，文本前会被打上 [受限用户:仅问答] 前缀（软限制）——这类消息只让模型回答问题，不许动文件/终端/配置；同时它们永远按排队处理，不参与插话'),
   sensitivePatterns: z.array(z.string()).default([])
     .description('出站敏感内容审计正则（默认内置 rm -rf/关机/删库/密钥 等模式；留空用默认）'),
   mediaDir: z.string().default('')
@@ -804,6 +796,9 @@ export function apply(ctx: Context, config: Config): void {
     },
     connection,
     dshHome: dshHome(),
+    // 2026-11-24 主人：「兜底不能你自己想回啥回啥么 根据做到哪步 像聊天一样的回复」
+    // 静默兜底也借用会话模型现写一句（和主动搭话同一条通道，见下方定义）。
+    generateText: (prompt, options) => proactiveGenerateText(prompt, options),
     media,
     transcriber,
     // 2026-11-20 本地加：图片落盘即收进「未审核」（原来靠 5 分钟定时器扫目录，
@@ -858,8 +853,6 @@ export function apply(ctx: Context, config: Config): void {
       inboxQueueEnabled: config.inboxQueueEnabled,
       inboxQueueDelayMs: config.inboxQueueDelayMs,
       interimMessages: config.interimMessages,
-      interimRecallMs: config.interimRecallMs,
-      interimRecall: config.interimRecall,
       sendErrorNotice: config.sendErrorNotice,
       notices: config.notices,
       rateLimitPerMinute: config.rateLimitPerMinute,

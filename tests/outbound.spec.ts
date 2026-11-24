@@ -80,8 +80,9 @@ describe('outbound pipeline', () => {
       .map(s => s.data.text ?? '')
       .join('')
     await vi.waitFor(() => {
-      // 2026-11-22：气泡末尾的「。」会被剥掉，所以按剥过的文本比。
-      expect(joinedText()).toBe(longText.replace(/。/g, ''))
+      // 2026-11-24 起「遇到句末标点就分条」这条规则已删：没有换行、没有列表项
+      // 就整段一条消息。这时只在**末尾**剥一个「。」，句子中间的句号原样留着。
+      expect(joinedText()).toBe(longText.replace(/。$/, ''))
     }, { timeout: 15_000 })
     expect(h.outbound.some(f => JSON.stringify(f.params).includes('base64://'))).toBe(false)
     h.client.close()

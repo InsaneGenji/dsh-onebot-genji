@@ -99,20 +99,13 @@ export interface ChatAgent {
      * next assistant/message (flushed live), else the final at turn/end.
      * M3-D2a: the former instant-mode-only pendingFinal folded in. */
     loopPending: string | null;
-    /** Sent interim messages awaiting turn/end summary (text kept for the recap
-     * t2i card). `sentAt` drives the per-message auto-recall scheduled after
-     * each interim's send completes. */
+    /** 本回合发出去的中间消息（只做记账：回合内诊断 / 日志用）。
+     *  2026-11-24 起不再用于撤回和小结卡——中间消息发出去就留在聊天里。 */
     loopBuffer: Array<{
         id: string;
         text: string;
         sentAt: number;
     }>;
-    /** Per-interim 90s (config interimRecallMs) auto-recall timers, keyed by
-     * message id; cleared when turn/end recalls the originals immediately. */
-    recallTimers: Map<string, ReturnType<typeof setTimeout>>;
-    /** Interim message ids already auto-revoked by their 90s timer during a long
-     * turn — skipped by the turn/end immediate recall (already gone from QQ). */
-    recalledInterimIds: Set<string>;
     /** Last assistant message id already handled — duplicate session events
      * (streaming/usage re-emits of the same message) must not re-send it. */
     lastHandledMessageId: string | undefined;
@@ -453,8 +446,6 @@ export declare class ChatRegistry {
     resetChat(chatId: ChatId): Promise<void>;
     /** Read the chat→session mapping file (for /id and /status when no live chat). */
     sessionIdFromMapping(chatId: ChatId): Promise<string | undefined>;
-    /** Clear every pending interim auto-recall timer for a chat (dispose path). */
-    private clearInterimTimers;
     /** Stop everything registry-owned: cancel the debounce timer, save the
      * mapping, dispose every agent, clear both indexes. */
     stop(): Promise<void>;

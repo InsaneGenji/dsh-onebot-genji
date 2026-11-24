@@ -1113,3 +1113,64 @@ docker restart 会丢登录态（需重新扫码/QCE 登录）
 - **测试**：`tests/bubble-split-list.spec.ts` 整篇重写 14 例（换行即分条 / 句末标点即分条 / 逗号顿号冒号分号不切 / 列表项一行一条 / 句末句号剥掉 / 纯标点并入上一条 / `~` 不当句末）。`bubble-split-list` + `trailing-period` + `bubble-gap` = 27 passed。`tests/interim.spec.ts` 里那条 104 字的断言改成先 `flatten`（去全部空白）再比、并断言结尾不是「。」。
 - **踩坑记录**：中途我用 `Get-Content ... -replace ... | Set-Content -Encoding UTF8` 回写 `src/outbound.ts`，PowerShell 5.1 按 GBK 读 UTF-8 中文，整个文件中文变乱码、diff 显示 217 插入 208 删除。`git checkout --` 被安全网拦，改用 node 读 `git show HEAD:src/outbound.ts` 写回干净字节，再用 `edit` 工具逐处改。**这个仓库的 .ts 一律用 `edit`/`write`，不许 pwsh 回写。**
 - **验证**：tsc exit 0；全量 1164 tests / 1148 passed / 3 skipped / 13 failed（13 个仍全是 Windows 环境固有：`commands` 里两条 `/workspace` 报 `INSANE~1` vs `InsaneGenji` 短名不一致、`media-cleanup`×1、`media-guard`×5、`stt-silk`×1、`tools-gate`×4）。用干净 worktree 跑过对照，`commands` 里那两条是环境固有的，改动前后一样。
+
+## 2026-11-24 0.18.0：中间消息体系重做、气泡切分第八版、插话与前缀放开
+
+这一天主人从早到晚盯着一件件事改，下面按主题归拢。
+
+### 1. 中间消息（interim）整套重做
+
+- **不再自动撤回，也不再发小结卡**。原来每条中间消息排一个 `interimRecallMs` 定时器到点 `delete_msg`，回合末还把整轮中间记录渲染成一张 `📋 本轮中间记录` 的 t2i 卡片发出去再把原消息撤掉。主人让整套去掉：中间消息发出去就留在聊天里，回合末只发最终回复。
+  - `src/interim.ts` 删掉 `clearInterimTimer` / `recallLoopMessages` / `revokeInterim` / `sendInterimSummary` 四个方法、`RECALL_SPACING_MS`、`recallTimers` / `recalledInterimIds` 两个字段，`InterimContext` 去掉 `sendMsg` / `call`，`config` 收成 `Pick<BridgeConfig, never>`。
+  - 设置里「自动撤回中间消息」「中间消息保留时长（毫秒）」两项连同 `src/client.ts` / `src/settings-remote.ts` / `src/index.ts` 的 schema 一起删掉（`ALL_KEYS` 97 → 95，面板字段 83 → 81）。
+- **静默兜底（方案四）**。主人选的路子是「正常由我自己发言，闷太久插件补一句」：
+  - `SILENCE_NUDGE_MS = 150_000`、`SILENCE_NUDGE_MAX = 3`（中途讨论过 90 秒 ×2、100 秒 ×5、100 秒 ×9，最后定 150 秒 ×3）。
+  - 只要「中间消息」开关开着，回合一开始就挂看门狗；我说了可见文字就重置；每催一次重新挂一次，催满 3 次这个回合彻底安静；回合结束 `clearNudge`。
+  - 催什么不写死：`composeNudge()` 拼一段提示词交给当前会话模型现场写一句（20 秒超时、剥代码围栏、限 60 字），写崩/返回空/太长才回落到 `NUDGE_OPENERS` / `NUDGE_FOLLOWUPS` 话术池。接线走 `BridgeDeps.generateText` → `src/index.ts` 的 `progressiveGenerateText` 同一通道。
+  - 进度短语 `progressPhrase()` 把最近用过的工具名翻译成人话（`TOOL_LABELS`：read→看文件、edit→改代码、bash→跑命令…），所以兜底说的是「刚看文件，现在在跑命令」而不是「还在跑」。
+  - 用户明确要求：**兜底跟着中间消息开关走**——开关关掉，一条都不发。
+- **超时补发不再被工具调用续命**。`src/deferred.ts` 的 `onAssistantMessage` 原来只要计时器在就无条件 `armTimer`，纯 tool-call（text 为空）也算，于是连着跑几十个工具时 `deferredTimeoutMs`（默认 600 秒）永远到不了——那轮跑了 11 分半也没提醒就是撞在这上面。现在只有「真说了话」才重置，判据和静默兜底对齐。
+
+### 2. 气泡切分第八版
+
+主人一天改了四次口径，最终版（`src/outbound.ts` `splitIntoBubbles`）：
+
+1. 换行则分条。
+2. 列表项（`1.` `2、` `3)`、`一、二、三、`、`-` `•` `*`）**前面有换行的话不单独成条，并进上一条气泡**，内部保留换行——他要的是「一条气泡里几个编号各自另起一行」。
+3. 句末标点**不再**切（第五条规则被主人删掉）。
+4. 每行末尾的「。」剥掉。
+5. 相邻气泡之间按上一条字数停顿 420~2200ms。
+
+- 新增 `LIST_MARK` / `INLINE_ITEM_START` / `isListItemLine()` / `breakBeforeListItems()`；行内挤着的编号先补换行，再决定并/不并。
+- 中文数字列表（`一、二、三、`）也算列表项。
+- 提问卡、计划书、命令输出（`/help` `/doctor` `/workspace`）走 `SendOptions.noBubbleSplit`，整段发一条不切。
+
+### 3. 出站清洗：别再一条条补规则
+
+- 主人原话「感觉一直加清洗过滤规则不是个事啊」。先把它加的「收到 N chars」正则撤回，改成在 `src/prompt.ts` 里写明不许抄宿主/工具元信息（`[图片:路径]`、`Attached image(s) from tool result:`、`[HH:MM]` 前缀、`<user_message>` 信封、`<system-reminder>` / `<skill_content>` 块）。
+- 清洗层只留兜底，但孤立标签这条必须收：`src/outbound.ts` `stripBoundaryLeakage` 的标签规则放宽成「名字 ≤7 字符 + 不带属性 + 黑名单排除宿主标签和常见 HTML/配置标签」，这样 `</ap>`、`</apm>`、`</agent>` 都清得掉，而 `</user_message>` / `<config version="1">` / `<div>` 不动。
+  - 踩了三次：字数限死 4 漏掉 `agent`；放宽到 15 且不排除 → `tests/outbound.spec.ts` 12 个挂；最终 `{0,7}` + 精确排除表才稳。
+- 语音条回合发完语音又复述工具回执（「语音条已发出：…」）也顺手加了一条剥前缀规则 + `VOICE_HINT` 里补一句「念完了就完了，正文留空」。
+
+### 4. 插话与受限前缀放开
+
+- `src/bridge.ts` `interceptBusyTurn` 两个限制都去掉：不再要求消息「plain」（无图无引用无转发），也不再排除受限群成员。现在只看 `newMessagePolicy === 'steer'` 和 `autoSteerAllowed`。
+- 受限前缀 `[受限用户:仅问答]` **扩展到私聊**：`src/inbound.ts` 把注入挪到群/私聊分支之外，非管理员一律加，前缀固定在最外层（`commands.ts` 的 `unwrapUserMessageText` 才能剥掉）。它现在只影响模型行为，不再影响排队。
+
+### 5. 设置页
+
+- 唤醒词挪到「@全体唤醒」下面（`src/client.ts` 的 group 分区 keys 顺序）。
+- 中间消息三项排到通知段之前，入站连发合并两项排到最前。
+- 表情包挑图：`stickerHintFor()` 补一句「贴合度差不多时随机挑，别总捡最新的那几张」。
+
+### 6. `qq_send_text` 只剩一个用途
+
+第五次改口径，最终：**只有要显式引用某条消息（传 `reply_to`）时才用**。唱歌、画图、跑构建、下载、起服务这些开长活之前的话全写正文——真正让主人看到等待期动静的应该是中间消息和静默兜底，不是额外的招呼。`src/prompt.ts` / `src/tools.ts` / `AGENTS.md` 三处同步。
+
+### 验证
+
+- tsc exit 0。
+- `bubble-split-list` + `outbound` + `interim` + `interim-machine` + `trailing-period` + `bubble-gap` + `internal-marker-leak` + `issue46-host-meta` + `deferred` + `steer-queue` + `bridge` + `t4-port` + `client-settings` + `settings-remote` + `t5-port` + `t7-port` 全绿。
+- 八个设置校验脚本（`settings-schema-align` / `settings-sections-check` / `settings-fields-check` / `settings-ui-check` / `settings-client-factory-check` / `settings-client-apply-check` / `settings-hcheck` / `settings-sticker-render-check`）全 exit 0。
+- 全量 1175 tests / 1159 passed / 3 skipped / 13 failed，13 个仍是 Windows 环境固有的 `commands`×2（8.3 短名）、`media-cleanup`×1、`media-guard`×5、`stt-silk`×1、`tools-gate`×4。
+- 实机验证过：兜底 150 秒真会出声、念白走 dsh-pet、分条按第八版出。

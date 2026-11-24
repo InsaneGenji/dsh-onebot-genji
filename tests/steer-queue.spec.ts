@@ -129,32 +129,32 @@ describe('newMessagePolicy — steer', () => {
   }, 60_000)
 })
 
-describe('插话例外规则（两种模式都不进 steer）', () => {
-  it('steer 模式下带引用的消息按排队处理：引用展开照常、不 steer、有排队提示', async () => {
+describe('插话不再按 plain 过滤（2026-11-24 主人：这个限制直接去掉吧）', () => {
+  it('steer 模式下带引用的消息也插话：引用展开照常、不排队', async () => {
     const h = await makeCmdHarness({ newMessagePolicy: 'steer' })
     h.sendText('启动任务')
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     setRunning(h)
 
-    // 带引用段的消息（reply → replyId）：plain=false → 排队分支
+    // 带引用段的消息（reply → replyId）：plain=false，但插话判定不再看它。
     h.client.send(JSON.stringify({
       post_type: 'message', message_type: 'private', user_id: 10001, self_id: 10002,
       message: [{ type: 'reply', data: { id: '7' } }, { type: 'text', data: { text: '针对引用的补充' } }],
       raw_message: '[CQ:reply,id=7]针对引用的补充',
       sender: { user_id: 10001, nickname: '小明' },
     }))
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2), )
-    expect(h.captured.steers).toHaveLength(0)
-    expect(h.captured.followups[1].text).toContain('针对引用的补充')
-    await vi.waitFor(() => expect(sentTexts(h.outbound).filter(t => t.includes(QUEUE_NOTICE_TEXT))).toHaveLength(1))
-    expect(sentTexts(h.outbound).filter(t => t.includes(STEER_ACCEPTED_NOTICE))).toHaveLength(0)
+    await vi.waitFor(() => expect(h.captured.steers).toHaveLength(1))
+    expect(h.captured.steers[0].text).toContain('针对引用的补充')
+    expect(h.captured.followups).toHaveLength(1)
+    await vi.waitFor(() => expect(sentTexts(h.outbound).filter(t => t.includes(STEER_ACCEPTED_NOTICE))).toHaveLength(1))
+    expect(sentTexts(h.outbound).filter(t => t.includes(QUEUE_NOTICE_TEXT))).toHaveLength(0)
 
     h.client.close()
     await h.bridge.stop()
     await h.connection.stop()
   }, 60_000)
 
-  it('steer 模式下图片消息按排队处理：媒体管线入口未被绕过、不 steer', async () => {
+  it('steer 模式下图片消息也插话：媒体管线入口未被绕过', async () => {
     const h = await makeCmdHarness({ newMessagePolicy: 'steer' })
     h.sendText('启动任务')
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
@@ -166,32 +166,32 @@ describe('插话例外规则（两种模式都不进 steer）', () => {
       raw_message: '[CQ:image,file=abc.image]',
       sender: { user_id: 10001, nickname: '小明' },
     }))
-    // 图片消息走完整媒体管线（get_image 解析在 fake 网关上降级为占位符）后按排队 dispatch
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2))
-    expect(h.captured.steers).toHaveLength(0)
-    expect(h.captured.followups[1].text).toContain('[图片]')
-    await vi.waitFor(() => expect(sentTexts(h.outbound).filter(t => t.includes(QUEUE_NOTICE_TEXT))).toHaveLength(1))
+    // 图片照常走完整媒体管线（fake 网关上降级为占位符），然后作为插话提交。
+    await vi.waitFor(() => expect(h.captured.steers).toHaveLength(1))
+    expect(h.captured.steers[0].text).toContain('[图片]')
+    expect(h.captured.followups).toHaveLength(1)
+    await vi.waitFor(() => expect(sentTexts(h.outbound).filter(t => t.includes(QUEUE_NOTICE_TEXT))).toHaveLength(0))
 
     h.client.close()
     await h.bridge.stop()
     await h.connection.stop()
   }, 60_000)
 
-  it('受限用户（[受限用户:仅问答]）自动插话不放宽：steer 模式下群成员消息仍按排队', async () => {
-    const h = await makeCmdHarness({ newMessagePolicy: 'steer', restrictedMemberPrefix: true })
+  it('受限用户（[受限用户:仅问答]）现在也能插话：前缀照旧注入，但不再挡插队（2026-11-24）', async () => {
+    const h = await makeCmdHarness({ newMessagePolicy: 'steer', autoSteerPolicy: 'all', restrictedMemberPrefix: true })
     // 群管理员先开任务（sendGroupTextAs 自带 @ 满足 requireMention）
     h.sendGroupTextAs('启动群任务', 10001)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     setRunning(h, 'group:888')
 
     h.sendGroupTextAs('群成员想插话', 20003)
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2))
-    expect(h.captured.steers).toHaveLength(0)
-    // 软限制前缀原样保留：排队消息仍带 [受限用户:仅问答]
-    expect(h.captured.followups[1].text).toContain('[受限用户:仅问答]')
-    expect(h.captured.followups[1].text).toContain('群成员想插话')
-    await vi.waitFor(() => expect(sentTexts(h.outbound).filter(t => t.includes(QUEUE_NOTICE_TEXT))).toHaveLength(1))
-    expect(sentTexts(h.outbound).filter(t => t.includes(STEER_ACCEPTED_NOTICE))).toHaveLength(0)
+    await vi.waitFor(() => expect(h.captured.steers).toHaveLength(1))
+    // 软限制前缀原样保留（模型那边仍按「仅问答」对待）
+    expect(h.captured.steers[0].text).toContain('[受限用户:仅问答]')
+    expect(h.captured.steers[0].text).toContain('群成员想插话')
+    expect(h.captured.followups).toHaveLength(1)
+    await vi.waitFor(() => expect(sentTexts(h.outbound).filter(t => t.includes(STEER_ACCEPTED_NOTICE))).toHaveLength(1))
+    expect(sentTexts(h.outbound).filter(t => t.includes(QUEUE_NOTICE_TEXT))).toHaveLength(0)
 
     h.client.close()
     await h.bridge.stop()
@@ -237,19 +237,19 @@ describe('autoSteerPolicy（T9-B，用户裁决 2026-10-12）—— steer 模式
     await h.connection.stop()
   }, 60_000)
 
-  it('受限用户任何档都不自动插话：all 档下 [受限用户:仅问答] 群成员消息仍按排队', async () => {
+  it('受限用户 all 档下同样插话：前缀保留、不排队（2026-11-24 主人：这个限制也去掉）', async () => {
     const h = await makeCmdHarness({ newMessagePolicy: 'steer', autoSteerPolicy: 'all', restrictedMemberPrefix: true })
     h.sendGroupTextAs('启动群任务', 10001)
     await vi.waitFor(() => expect(h.captured.followups).toHaveLength(1))
     setRunning(h, 'group:888')
 
     h.sendGroupTextAs('受限成员的补充', 20003)
-    await vi.waitFor(() => expect(h.captured.followups).toHaveLength(2))
-    expect(h.captured.steers).toHaveLength(0)
-    expect(h.captured.followups[1].text).toContain('[受限用户:仅问答]')
-    expect(h.captured.followups[1].text).toContain('受限成员的补充')
-    await vi.waitFor(() => expect(sentTexts(h.outbound).filter(t => t.includes(QUEUE_NOTICE_TEXT))).toHaveLength(1))
-    expect(sentTexts(h.outbound).filter(t => t.includes(STEER_ACCEPTED_NOTICE))).toHaveLength(0)
+    await vi.waitFor(() => expect(h.captured.steers).toHaveLength(1))
+    expect(h.captured.steers[0].text).toContain('[受限用户:仅问答]')
+    expect(h.captured.steers[0].text).toContain('受限成员的补充')
+    expect(h.captured.followups).toHaveLength(1)
+    await vi.waitFor(() => expect(sentTexts(h.outbound).filter(t => t.includes(STEER_ACCEPTED_NOTICE))).toHaveLength(1))
+    expect(sentTexts(h.outbound).filter(t => t.includes(QUEUE_NOTICE_TEXT))).toHaveLength(0)
 
     h.client.close()
     await h.bridge.stop()

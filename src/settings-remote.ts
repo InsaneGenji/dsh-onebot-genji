@@ -89,7 +89,9 @@ export const SETTINGS_GROUPS: Readonly<Record<string, readonly string[]>> = {
   // 2026-11-19（本地加）：回合形式掷骰的语音/表情概率（原来写死在 bridge.js）+ 主动搭话——
   // 主动搭话的面板键扁平成 proactiveXxx，宿主配置嵌套在 proactive.xxx 下
   //（前缀剥离见 effectiveConfig / updateSettings 特例），从权限组搬到行为组。
-  behavior: ['interimMessages', 'interimRecall', 'interimRecallMs', 'sendErrorNotice', 'unknownCommand', 'rateLimitPerMinute', 'voiceReplyEnabled', 'voiceReplyProb', 'stickerReplyEnabled', 'stickerReplyProb', 'newMessagePolicy', 'autoSteerPolicy', 'deferredTimeoutMs', 'inboxQueueEnabled', 'inboxQueueDelayMs', 'titleSyncEnabled', 'ignoreSelf', 'sidebarEntryEnabled',
+  // 2026-11-24 主人点名：入站连发合并两项挪到最前（「每分钟消息频率上限」之上），
+  // 中间消息三项挪到「插话提示」（通知段）之前。
+  behavior: ['inboxQueueEnabled', 'inboxQueueDelayMs', 'rateLimitPerMinute', 'voiceReplyEnabled', 'voiceReplyProb', 'stickerReplyEnabled', 'stickerReplyProb', 'unknownCommand', 'newMessagePolicy', 'autoSteerPolicy', 'deferredTimeoutMs', 'sendErrorNotice', 'interimMessages', 'titleSyncEnabled', 'ignoreSelf', 'sidebarEntryEnabled',
     'proactiveEnabled', 'proactiveTargetUsers', 'proactiveMinIdleMinutes', 'proactiveMinGapMinutes',
     'proactiveMaxPerDay', 'proactiveQuietFrom', 'proactiveQuietTo', 'proactiveAttemptGapMinutes',
     'proactiveBurstProb'],
@@ -183,8 +185,6 @@ export const SCHEMA_DEFAULTS: Readonly<Record<string, unknown>> = {
   restrictedMemberPrefix: true,
   sensitivePatterns: [],
   interimMessages: true,
-  interimRecall: false,
-  interimRecallMs: 90_000,
   sendErrorNotice: false,
   unknownCommand: 'intercept',
   rateLimitPerMinute: 30,
@@ -305,14 +305,13 @@ const ENUM_KEYS: Readonly<Record<string, readonly string[]>> = {
   // 2026-11-23（本地加）：QQ 空间说说的可见范围。
   qzoneVisibility: ['public', 'friends', 'private'],
 }
-const NUMBER_KEYS: readonly string[] = ['port', 'interimRecallMs', 'rateLimitPerMinute', 'deferredTimeoutMs', 'textImageThreshold', 'chatIdleEvictDays', 'outboundImageMaxBytes', 'maxVoiceBytes', 'maxFileBytes', 'inboundImageMaxPx', 'inboundFileMaxBytes', 'inboxQueueDelayMs', 'groupContextLines', 'voiceReplyProb', 'stickerReplyProb',
+const NUMBER_KEYS: readonly string[] = ['port', 'rateLimitPerMinute', 'deferredTimeoutMs', 'textImageThreshold', 'chatIdleEvictDays', 'outboundImageMaxBytes', 'maxVoiceBytes', 'maxFileBytes', 'inboundImageMaxPx', 'inboundFileMaxBytes', 'inboxQueueDelayMs', 'groupContextLines', 'voiceReplyProb', 'stickerReplyProb',
   'proactiveMinIdleMinutes', 'proactiveMinGapMinutes', 'proactiveMaxPerDay', 'proactiveQuietFrom', 'proactiveQuietTo',
   'proactiveAttemptGapMinutes', 'proactiveBurstProb', 'reactionEmoji',
   'qzoneMaxPerDay', 'qzoneMinGapMinutes', 'qzoneQuietFrom', 'qzoneQuietTo']
 /** 数字键取值范围（评审 B4：port 1–65535、时长/频控 ≥0；越界在 Remote 层拒绝，不再只依赖宿主回滚兜底）。 */
 const NUMBER_RANGE: Readonly<Record<string, readonly [number, number | undefined]>> = {
   port: [1, 65535],
-  interimRecallMs: [0, undefined],
   rateLimitPerMinute: [0, undefined],
   deferredTimeoutMs: [0, undefined],
   textImageThreshold: [0, undefined],
@@ -348,7 +347,7 @@ const NUMBER_RANGE: Readonly<Record<string, readonly [number, number | undefined
  *  inboxQueueEnabled + T11 sidebarEntryEnabled + T24 titleSyncEnabled + #61 建议 2
  *  startupResumeEnabled：28 键；2026-11-22 删掉 proactiveFollowupEnabled 那一键）。 */
 const BOOLEAN_KEYS: readonly string[] = [
-  'requireMention', 'allowAllUsers', 'interimMessages', 'interimRecall', 'sendErrorNotice',
+  'requireMention', 'allowAllUsers', 'interimMessages', 'sendErrorNotice',
   'newSessionGreeting', 'replyCountsAsMention', 'atAllCountsAsMention', 'reactionOnMention',
   'actionAuditEnabled', 'traceEnabled', 'recordInbound', 'inboxRedact', 'injectEnabled', 'injectDryRun',
   'textImageEnabled', 'pokeEnabled', 'firstMessageAsUser', 'memoryFilesEnabled', 'ignoreSelf',

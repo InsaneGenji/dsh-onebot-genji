@@ -47,4 +47,23 @@ describe('2026-11-23: 内部调度标记出站清洗', () => {
     // 没有路径的裸 [图片] 占位不算泄漏（用户也可能是这么写的）
     expect(stripBoundaryLeakage('[图片]')).toBe('[图片]')
   })
+
+  it('整行只有一个孤立标签时丢掉（2026-11-24 `</ap>` / `</apm>`）', () => {
+    expect(stripBoundaryLeakage('</ap>')).toBe('')
+    expect(stripBoundaryLeakage('</apm>')).toBe('')
+    expect(stripBoundaryLeakage('<ap />')).toBe('')
+    expect(stripBoundaryLeakage('</ap>\n嗯')).toBe('嗯')
+    expect(stripBoundaryLeakage('嗯\n</apm>')).toBe('嗯')
+  })
+
+  it('agent 段标签也丢掉（2026-11-24 截图抓到的 `</agent>`）', () => {
+    expect(stripBoundaryLeakage('</agent>')).toBe('')
+    expect(stripBoundaryLeakage('嗯\n</agent>')).toBe('嗯')
+    expect(stripBoundaryLeakage('<agent name="x"></agent>')).toBe('<agent name="x"></agent>')
+  })
+
+  it('句子里夹标签的不动（正常讨论 HTML 不算泄漏）', () => {
+    expect(stripBoundaryLeakage('这个 <div> 包着三行')).toBe('这个 <div> 包着三行')
+    expect(stripBoundaryLeakage('记得写 </body> 收尾')).toBe('记得写 </body> 收尾')
+  })
 })

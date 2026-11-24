@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { Config } from '../src/index.js'
 import {
   ALL_KEYS, NOTICE_KEYS, PENDING_SCHEMA_KEYS, SCHEMA_DEFAULTS, SETTINGS_GROUPS, validatePatch,
@@ -11,13 +11,13 @@ import {
 
 /** 用户裁定①（含安全面项，风险已提示仍拍板）：10 处默认值按贡献者值翻转。
  *  其中 injectEnabled/injectDryRun 已改回默认关 + 干跑（注入通道仅调试用，
- *  断言见 tests/inject.spec.ts），这里只列其余 8 处。 */
+ *  断言见 tests/inject.spec.ts），interimRecall 已在 2026-11-24 整套删除，
+ *  这里只列剩余 7 处。 */
 const T5_FLIPPED: ReadonlyArray<readonly [string, unknown]> = [
   ['mode', 'forward'],
   ['allowPrivateHosts', true],
   ['inboxRedact', true],
   ['newMessagePolicy', 'steer'],
-  ['interimRecall', false],
   ['sendErrorNotice', false],
   ['textImageThreshold', 350],
   ['cardFooter', 'OneBot'],
@@ -38,14 +38,14 @@ describe('T5 键表完整性（SCHEMA_DEFAULTS 与 schema 无孤儿键）', () =
   const resolved = Config({}) as Record<string, unknown>
   const groupKeys = Object.values(SETTINGS_GROUPS).flat()
 
-  it('七组结构（T8/T11/T24 增键 + 0.10.0 重排方案 A + #59 memberTools + T1 reaction + 11.18 allowAllUsers/旁观组下架 + 11.19 掷骰/表情包/主动搭话 + 11.22 删补话五键）：connection 6 / permissions 18 / behavior 27 / stickers 2 / session 11 / media 17 / diagnostics 7', () => {
+  it('七组结构（T8/T11/T24 增键 + 0.10.0 重排方案 A + #59 memberTools + T1 reaction + 11.18 allowAllUsers/旁观组下架 + 11.19 掷骰/表情包/主动搭话 + 11.22 删补话五键 + 11.24 删中间消息两键）：connection 6 / permissions 18 / behavior 25 / stickers 2 / qzone 6 / session 11 / media 17 / diagnostics 7', () => {
     expect(Object.keys(SETTINGS_GROUPS)).toEqual(['connection', 'permissions', 'behavior', 'stickers', 'qzone', 'session', 'media', 'diagnostics'])
     expect(SETTINGS_GROUPS.connection).toHaveLength(6) // 0.10.0 重排：连接=通道配置（-8 键）
     expect(SETTINGS_GROUPS.permissions).toHaveLength(18) // 本地加：+groupContextLines // #59：+memberTools；T1 reaction：+reactionOnMention/reactionEmoji；2026-11-18：allowAllUsers 从面板摘掉 -1
     // 2026-11-19 本地加 18 键：voiceReplyEnabled/voiceReplyProb/stickerReplyEnabled/stickerReplyProb
     //（紧跟 rateLimitPerMinute）+ 14 个扁平 proactiveXxx（组尾）；2026-11-22 删掉补话五键，
     //  组尾只剩 9 个 proactiveXxx → 32→27。
-    expect(SETTINGS_GROUPS.behavior).toHaveLength(27) // 2026-11-23：qzone 六键独立成组，behavior 回到 27
+    expect(SETTINGS_GROUPS.behavior).toHaveLength(25) // 2026-11-23：qzone 六键独立成组，behavior 回到 27；2026-11-24：删 interimRecall/interimRecallMs → 25
     // 2026-11-18：「旁观」整组退出组表；2026-11-20：整套删除（schema/ALL_KEYS/DEFAULTS 里也没了）
     expect(SETTINGS_GROUPS).not.toHaveProperty('bystander')
     expect(SETTINGS_GROUPS.behavior).toEqual(expect.arrayContaining(['inboxQueueEnabled', 'inboxQueueDelayMs', 'titleSyncEnabled']))

@@ -407,6 +407,28 @@ describe('deferred 单元 — 计时器与静音语义', () => {
     expect(scheduler.active()).toEqual([]) // 计时解除
   })
 
+  it('纯 tool-call 不重置静默窗口：只有真说了话才续命（2026-11-24 主人）', () => {
+    const scheduler = new FakeScheduler()
+    const { ctx } = makeUnitCtx()
+    const delivery = new DeferredDelivery(ctx, { now: () => 1_000, schedule: scheduler.schedule, cancel: scheduler.cancel })
+    delivery.onTurnStart('private:10001', 's-1')
+    const armed = scheduler.tasks[0]
+    for (let i = 0; i < 5; i += 1) {
+      delivery.onAssistantMessage('private:10001', 's-1', {
+        id: 'tool' + String(i),
+        content: [{ type: 'tool-call', id: 'c', name: 'bash', arguments: '{}' }],
+      } as never)
+    }
+    // 连着五次工具调用，计时器一动没动（旧行为会每次重新排一条）。
+    expect(scheduler.tasks).toHaveLength(1)
+    expect(armed.cancelled).toBe(false)
+    expect(scheduler.active()).toEqual([{ ms: 1_000 }])
+    // 真说了一句才重置。
+    delivery.onAssistantMessage('private:10001', 's-1', { id: 'm1', content: [{ type: 'text', text: '说一句' }] })
+    expect(scheduler.tasks).toHaveLength(2)
+    expect(armed.cancelled).toBe(true)
+  })
+
   it('超时登记时捕获并清空 loopPending（正常终局路径无内容可重复刷）', () => {
     const scheduler = new FakeScheduler()
     let pending: string | null = '超时前已生成的文字'

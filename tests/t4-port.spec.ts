@@ -44,20 +44,14 @@ function makeInterimHarness(opts?: { interim?: boolean }) {
       sentTexts.push(text)
       return ['7']
     },
-    sendMsg: async () => '8',
-    call: async () => undefined,
     chainTail: async () => undefined,
     relayHostCards: () => undefined,
     effectiveInterim: () => interimMode,
     log: () => undefined,
-    config: {
-      interimRecallMs: undefined, interimRecall: undefined,
-      maxImageBytes: 8 * 1024 * 1024, cardFooter: 'dsh', fontFiles: [], fontFamilies: [],
-    },
+    config: {},
   })
   const chat: InterimChat = {
-    loopPending: null, loopBuffer: [], recallTimers: new Map(),
-    recalledInterimIds: new Set(), lastHandledMessageId: undefined,
+    loopPending: null, loopBuffer: [], lastHandledMessageId: undefined,
     turnFormVoice: false, voiceSentThisTurn: false,
   }
   const assistant = (id: string, ...parts: unknown[]) => ({

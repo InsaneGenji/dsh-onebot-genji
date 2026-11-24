@@ -184,10 +184,6 @@ export interface Config {
     allowAllUsers: boolean;
     ignoreSelf: boolean;
     interimMessages: boolean;
-    /** Per-interim auto-recall delay (ms) from each interim's send completion. */
-    interimRecallMs: number;
-    /** M3-D2b: interim recall degrade switch (false = send-only interims). */
-    interimRecall: boolean;
     sendErrorNotice: boolean;
     /** T8/#27: auto-receipt notice switches — boolean, or a custom text string. */
     notices: {

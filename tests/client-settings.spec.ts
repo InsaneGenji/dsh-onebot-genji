@@ -232,7 +232,7 @@ describe('T8 客户端 bundle — descriptor 契约核对（与宿主 src/settin
     expect(parsed.config.reactionOnMention).toBe(false)
     expect(parsed.config.reactionEmoji).toBe(178)
     expect(parsed.config.allowAllUsers).toBe(false) // 面板下架但 schema/codec 仍保留（老配置可读）
-    expect(Object.keys(parsed.config)).toHaveLength(97) // 90 ALL_KEYS 配置键 + notices（旁观 5 键 2026-11-20 已删；补话 5 键 2026-11-22 已删）
+    expect(Object.keys(parsed.config)).toHaveLength(95) // 2026-11-24：删 interimRecall/interimRecallMs 97→95；90 ALL_KEYS 配置键 + notices（旁观 5 键 2026-11-20 已删；补话 5 键 2026-11-22 已删）
     expect(parsed.config.notices).toEqual(SCHEMA_DEFAULTS.notices)
   })
 
@@ -281,9 +281,10 @@ describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已
       'groupContextLines', 'sensitivePatterns',
     ],
     behavior: [
-      'rateLimitPerMinute', 'voiceReplyEnabled', 'voiceReplyProb', 'stickerReplyEnabled', 'stickerReplyProb',
-      'unknownCommand', 'newMessagePolicy', 'autoSteerPolicy', 'inboxQueueEnabled',
-      'inboxQueueDelayMs', 'interimMessages', 'interimRecall', 'interimRecallMs', 'sendErrorNotice', 'deferredTimeoutMs',
+      'inboxQueueEnabled', 'inboxQueueDelayMs', 'rateLimitPerMinute', 'voiceReplyEnabled', 'voiceReplyProb',
+      'stickerReplyEnabled', 'stickerReplyProb',
+      'unknownCommand', 'newMessagePolicy', 'autoSteerPolicy', 'deferredTimeoutMs', 'sendErrorNotice',
+      'interimMessages',
       'proactiveEnabled', 'proactiveTargetUsers', 'proactiveMinIdleMinutes', 'proactiveMinGapMinutes',
       'proactiveMaxPerDay', 'proactiveQuietFrom', 'proactiveQuietTo', 'proactiveAttemptGapMinutes',
       'proactiveBurstProb',
@@ -302,12 +303,12 @@ describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已
     diagnostics: ['actionAuditEnabled', 'traceEnabled', 'recordInbound', 'inboxRedact', 'injectEnabled', 'injectDryRun', 'logLevel'],
   }
 
-  it('分组键序逐字对齐面板口径（7 组 77 键，含 T6/T7 转正键、T24 titleSyncEnabled、#61 建议 2 startupResumeEnabled、11.19 掷骰四键/表情包组/主动搭话 9 键、11.22 删补话五键）', () => {
+  it('分组键序逐字对齐面板口径（8 组 81 键，含 T6/T7 转正键、T24 titleSyncEnabled、#61 建议 2 startupResumeEnabled、11.19 掷骰四键/表情包组/主动搭话 9 键、11.22 删补话五键、11.23 qzone 独立组、11.24 删中间消息两键）', () => {
     expect(client.GROUP_KEYS).toStrictEqual(PANEL_GROUPS)
     expect(groups.map((group) => group.id)).toEqual(['connection', 'permissions', 'behavior', 'stickers', 'qzone', 'session', 'media', 'diagnostics'])
-    expect(allFields).toHaveLength(83)
+    expect(allFields).toHaveLength(81) // 2026-11-24：删两个中间消息键 83→81
     const clientKeys = allFields.map((field) => field.key)
-    expect(new Set(clientKeys).size).toBe(83) // 无重复
+    expect(new Set(clientKeys).size).toBe(81) // 无重复（2026-11-24：删两个中间消息键 83→81）
     for (const key of clientKeys) expect([...ALL_KEYS]).toContain(key) // 无孤儿键
     // 面板键 ⊂ host SETTINGS_GROUPS（host 侧仍保留下架键，面板只是不再渲染）
     const hostKeys = Object.values(SETTINGS_GROUPS).flat()
@@ -374,7 +375,7 @@ describe('T8 客户端 bundle — 六组 62 键（面板下架键与旁观组已
 
   it('默认值逐字对齐 host SCHEMA_DEFAULTS（88 键：77 面板键 + 下架键 + chatIdleEvictDays；notices 走面板 5 真键不在 DEFAULTS）', () => {
     const hostDefaults = SCHEMA_DEFAULTS as Record<string, unknown>
-    expect(Object.keys(defaults)).toHaveLength(94) // 含下架键与 chatIdleEvictDays（旁观 5 键 2026-11-20 已删；补话 5 键 2026-11-22 已删）
+    expect(Object.keys(defaults)).toHaveLength(92) // 2026-11-24：删两个中间消息键 94→92；含下架键与 chatIdleEvictDays（旁观 5 键 2026-11-20 已删；补话 5 键 2026-11-22 已删）
     expect('notices' in defaults).toBe(false) // notices 由 NOTICE_KEYS 面板通道承载
     expect(defaults.chatIdleEvictDays).toBe(hostDefaults.chatIdleEvictDays) // 不上面板但参与徽标对照
     expect(defaults.sidebarEntryEnabled).toBe(true) // T11：侧边栏入口默认开（设置项已下架，行为恒开）
@@ -503,17 +504,6 @@ describe('T8 showIf 条件显隐 — 贡献者面板交互契约', () => {
     expect(reverse).not.toContain('正向 WS 服务器地址')
   })
 
-  it('中间消息联动：interimRecall ← interimMessages、interimRecallMs ← interimRecall（两级级联）', () => {
-    const off = visibleLabels('behavior', { interimMessages: false })
-    expect(off).not.toContain('自动撤回中间消息')
-    expect(off).not.toContain('中间消息保留时长（毫秒）')
-    const level1 = visibleLabels('behavior', { interimRecall: false }) // 默认档：撤回开关显、延迟隐藏
-    expect(level1).toContain('自动撤回中间消息')
-    expect(level1).not.toContain('中间消息保留时长（毫秒）')
-    const level2 = visibleLabels('behavior', { interimRecall: true, interimRecallMs: '0' })
-    expect(level2).toContain('中间消息保留时长（毫秒）')
-  })
-
   it('autoSteerPolicy ← newMessagePolicy=steer；inboxQueueDelayMs ← inboxQueueEnabled', () => {
     expect(visibleLabels('behavior', {})).toContain('自动插话资格')
     expect(visibleLabels('behavior', { newMessagePolicy: 'queue' })).not.toContain('自动插话资格')
@@ -535,21 +525,22 @@ describe('T8 showIf 条件显隐 — 贡献者面板交互契约', () => {
     expect(visibleLabels('session', { memoryFilesEnabled: true })).toContain('记忆文件路径')
   })
 
-  it('渲染行计数与 showIf 自洽：默认草稿顶层字段行 77 行 = 可见 67 键 + 通知行；隐藏 16 键（默认 qzoneEnabled=false，qzone 五键全隐）', () => {
+  it('渲染行计数与 showIf 自洽：默认草稿顶层字段行 76 行 = 可见 66 键 + 通知行；隐藏 15 键（默认 qzoneEnabled=false，qzone 五键全隐）', () => {
     const visible = (field: { showIf?: { key: string; value: unknown } }) => !field.showIf || baseDraft()[field.showIf.key] === field.showIf.value
     const hiddenKeys = allFields.filter((field) => !visible(field)).map((field) => field.key)
-    expect(allFields.filter(visible)).toHaveLength(67)
+    expect(allFields.filter(visible)).toHaveLength(66)
     expect(hiddenKeys).toEqual([
-      'host', 'port', 'allowFrom', 'groupAllowFrom', 'inboxQueueDelayMs', 'interimRecallMs',
+      'host', 'port', 'allowFrom', 'groupAllowFrom', 'inboxQueueDelayMs',
       'qzoneVisibility', 'qzoneMaxPerDay', 'qzoneMinGapMinutes', 'qzoneQuietFrom', 'qzoneQuietTo',
       'memoryFiles', 'sttCommand', 'sttArgs', 'sttModel', 'textImageThreshold',
     ])
     const rowsPerGroup = groups.map((group) => topFieldRows(renderGroup(group.id, {})).length)
-    // connection 4（6-2 隐藏）/ permissions 10（12-2 隐藏）/ behavior 32（13 可见字段 + 4 通知段字段
-    // + 10 通知行 + 5 主动搭话多行文案由 fold 展开后计入；2026-11-22 删补话四行 37→32）/ stickers 2 / session 8（9-1 隐藏）
-    // media 13（17-4 隐藏）/ diagnostics 7（旁观组已整组下架，不再计行）
-    expect(rowsPerGroup).toEqual([4, 10, 32, 2, 1, 8, 13, 7])
-    expect(rowsPerGroup.reduce((sum, count) => sum + count, 0)).toBe(77)
+    // connection 4（6-2 隐藏）/ permissions 10（12-2 隐藏）/ behavior 31（13 可见字段 + 4 通知段字段
+    // + 10 通知行 + 5 主动搭话多行文案由 fold 展开后计入；2026-11-24 删掉「自动撤回中间消息」一行）/
+    // stickers 2 / qzone 1（开关关着，其余五键隐藏）/ session 8（9-1 隐藏）/ media 13（17-4 隐藏）/
+    // diagnostics 7（旁观组已整组下架，不再计行）
+    expect(rowsPerGroup).toEqual([4, 10, 31, 2, 1, 8, 13, 7])
+    expect(rowsPerGroup.reduce((sum, count) => sum + count, 0)).toBe(76)
   })
 
   it('2026-11-22 行位调整：deferredTimeoutMs 紧跟「超时补发提示」文案行；sendErrorNotice 夹在「限流提示」和「私聊」之间', () => {
@@ -589,7 +580,7 @@ describe('T8 客户端 bundle — 渲染函数模块级可测（renderGroup 纯�
     const inputs = elements.filter((element) => element.type === stubUi.Input)
     expect(inputs.filter((input) => input.props.type === 'text')).toHaveLength(25) // 14 可见 number + 7 可见 string（forward 档 url 显、host/port 隐；默认 qzoneEnabled=false 时 4 个 qzone 数字键也隐）
     expect(inputs.filter((input) => input.props.type === 'password')).toHaveLength(1)
-    expect(elements.filter((element) => element.type === stubUi.Switch)).toHaveLength(31) // 25 布尔面板键 + 5 通知开关（恒显；2026-11-22 删 proactiveFollowupEnabled 31→30）
+    expect(elements.filter((element) => element.type === stubUi.Switch)).toHaveLength(30) // 2026-11-24：删 interimRecall 这一个布尔键 31→30；24 布尔面板键 + 5 通知开关（恒显）
     expect(elements.filter((element) => element.type === stubUi.Checkbox)).toHaveLength(1) // 仅 secret 清除勾选
     expect(elements.filter((element) => element.type === 'input')).toHaveLength(0) // 控件全走 ui 桩；原始 input 不再出现
   })
@@ -732,10 +723,10 @@ describe('T8 保存语义 — computePatch / computeDirtyKeys（updateSettings(p
 
   it('数字字段非法输入不进 patch 且单独报告（host validatePatch 二次校验兜底）', () => {
     const values = baseDraft()
-    values.interimRecallMs = 'abc'
+    values.qzoneMaxPerDay = 'abc'
     values.rateLimitPerMinute = '45'
     const { patch, invalidKeys } = compute(values, SNAPSHOT_CONFIG)
-    expect(invalidKeys).toEqual(['interimRecallMs'])
+    expect(invalidKeys).toEqual(['qzoneMaxPerDay'])
     expect(patch).toEqual({ rateLimitPerMinute: 45 })
   })
 
@@ -755,7 +746,7 @@ describe('T8 保存语义 — computePatch / computeDirtyKeys（updateSettings(p
     values.port = '9999'
     expect(computeDirtyKeys(values, SNAPSHOT_CONFIG)).toEqual(['port'])
     expect(computeDirtyKeys(values, SNAPSHOT_CONFIG, { secretDraft: 'tok', clearSecret: false })).toEqual(['port', 'accessToken'])
-    values.interimRecallMs = 'abc'
+    values.qzoneMaxPerDay = 'abc'
     expect(computeDirtyKeys(values, SNAPSHOT_CONFIG)).toEqual(['port']) // 非法数字不入 dirty
     expect(deriveModeInactiveKeys('reverse')).toEqual(['url'])
     expect(deriveModeInactiveKeys('forward')).toEqual(['host', 'port'])
@@ -770,13 +761,12 @@ describe('T8 数字行内校验 — NUMBER_RANGE 对齐 host + numberRangeInvali
     raw: unknown,
   ) => string | null
 
-  it('NUMBER_RANGE 覆盖全部面板数字键（28 键，含 T7 inboxQueueDelayMs、#58 旁观三键、11.19 掷骰两个概率与主动搭话 12 个数字键；reactionEmoji/chatIdleEvictDays 不上面板不入表）', () => {
+  it('NUMBER_RANGE 覆盖全部面板数字键（24 键，含 T7 inboxQueueDelayMs、11.19 掷骰两个概率与主动搭话 9 个数字键；reactionEmoji/chatIdleEvictDays 不上面板不入表）', () => {
     expect(NUMBER_RANGE).toStrictEqual({
       port: [1, 65535],
       rateLimitPerMinute: [0, undefined],
       voiceReplyProb: [0, 1],
       stickerReplyProb: [0, 1],
-      interimRecallMs: [0, undefined],
       deferredTimeoutMs: [0, undefined],
       inboxQueueDelayMs: [0, undefined],
       textImageThreshold: [0, undefined],
@@ -798,26 +788,27 @@ describe('T8 数字行内校验 — NUMBER_RANGE 对齐 host + numberRangeInvali
       qzoneQuietFrom: [0, 23],
       qzoneQuietTo: [0, 23],
     })
-    // 键集 = 面板 21 个 number 字段（2026-11-20：「旁观」整组连同 3 个数字键一起删了，
-    // 2026-11-22：补话四键删了 25→21；reactionEmoji/chatIdleEvictDays 不上面板也不入表）
+    // 键集 = 面板 24 个 number 字段（2026-11-20：「旁观」整组连同 3 个数字键一起删了，
+    // 2026-11-22：补话四键删了 25→21；2026-11-24：中间消息保留时长删了 25→24；
+    // reactionEmoji/chatIdleEvictDays 不上面板也不入表）
     const panelNumberKeys = allFields.filter((field) => field.type === 'number').map((field) => field.key)
-    expect(panelNumberKeys).toHaveLength(25) // 2026-11-23：+4 个 qzone 数字键
+    expect(panelNumberKeys).toHaveLength(24) // 2026-11-23：+4 个 qzone 数字键
     expect([...Object.keys(NUMBER_RANGE)].sort()).toEqual([...panelNumberKeys].sort())
     expect(CLIENT_SOURCE).toContain('src/settings-remote.ts')
   })
 
   it('numberRangeInvalid：越界/NaN 判非法返回范围文案（自带「 的整数」后缀），边界含端点；非 number 不校验', () => {
     const portField = allFields.find((field) => field.key === 'port')!
-    const recallField = allFields.find((field) => field.key === 'interimRecallMs')!
+    const qzoneField = allFields.find((field) => field.key === 'qzoneMaxPerDay')!
     expect(numberRangeInvalid(portField, '70000')).toBe('1–65535 的整数')
     expect(numberRangeInvalid(portField, '0')).toBe('1–65535 的整数')
     expect(numberRangeInvalid(portField, '3000')).toBeNull()
     expect(numberRangeInvalid(portField, '65535')).toBeNull()
     expect(numberRangeInvalid(portField, 'abc')).toBe('1–65535 的整数')
     expect(numberRangeInvalid(portField, '')).toBe('1–65535 的整数')
-    expect(numberRangeInvalid(recallField, '-1')).toBe('≥0 的整数')
-    expect(numberRangeInvalid(recallField, '0')).toBeNull()
-    expect(numberRangeInvalid(recallField, '1e9')).toBeNull()
+    expect(numberRangeInvalid(qzoneField, '-1')).toBe('0–20 的整数')
+    expect(numberRangeInvalid(qzoneField, '0')).toBeNull()
+    expect(numberRangeInvalid(qzoneField, '1e9')).toBe('0–20 的整数')
     expect(numberRangeInvalid(null, 'x')).toBeNull()
     expect(numberRangeInvalid({ key: 'botQQ', type: 'string' }, 'x')).toBeNull()
     // 文案模板只带 range 占位，后缀在 range 文案里（"field.numberInvalid": "必须是 {range}"）
@@ -881,7 +872,7 @@ describe('T8 冲突合并 — mergeOnConflict（远端未变保留草稿、远�
     expect(merged.keptCount).toBe(1)
     expect(merged.draft.port).toBe('3000')
     expect(merged.draft.botQQ).toBe('10086')
-    expect(Object.keys(merged.draft)).toHaveLength(83)
+    expect(Object.keys(merged.draft)).toHaveLength(81) // 2026-11-24：删两个中间消息键 83→81
     expect((client.computeDirtyKeys as Function)(merged.draft, next)).toEqual(['botQQ'])
   })
 

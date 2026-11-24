@@ -1,25 +1,20 @@
 /**
  * Interim domain (M2-D1-PR5 extraction; M3-D2a explicit machine): the
- * loop-merge outbound mode — live interim sends with per-message auto-recall
- * timers, the turn/end settlement (one t2i summary card → immediate recall
- * of the still-on-screen originals → the deferred final), and the
- * assistant/message interim routing (id dedupe, deferred-text flush,
- * tool-call short-circuit). M3-D2a: the per-chat cycle runs an explicit
- * idle/accumulating/settling state machine and every interim is booked at
- * SEND ENQUEUE time (placeholder entry, message ids backfilled on send
- * completion) — settlement drains enqueue-count == completion-count and no
- * longer depends on microtask registration order. The interim fields stay
- * on ChatAgent (registry.ts): the inbound residue reset, the /stop /retry
- * manual clears and the registry dispose paths read and write those fields
- * directly, so the tracker operates on the same per-chat object through the
- * narrow InterimChat view (the machine state itself lives in a WeakMap
- * keyed by the chat object — no registry field, dies with the chat).
+ * loop-merge outbound mode — live interim sends and the turn/end settlement
+ * (the deferred final), plus the assistant/message interim routing (id
+ * dedupe, deferred-text flush, tool-call short-circuit). M3-D2a: the per-chat
+ * cycle runs an explicit idle/accumulating/settling state machine.
+ *
+ * 2026-11-24 主人让把「自动撤回中间消息」和「中间消息保留时长」整套去掉
+ * （连同设置页那两个键）：中间消息发出去就留在聊天里，不再排撤回定时器、
+ * 也不再发整轮 t2i 小结卡——回合末只发最终回复。所以要保留它是默认行为，
+ * 不需要开关。
  * @module dsh-onebot/interim
  */
 import type { AssistantMessage } from '@deepseek-ai/dsh-llm';
 import type { BridgeConfig } from './bridge.js';
 import type { ChatId } from './chat.js';
-import type { OutboundSegment, SendOptions } from './outbound.js';
+import type { SendOptions } from './outbound.js';
 /** T4 (PR port 沉默哨兵)：模型只输出沉默哨兵 = 本回合不出站。
  * 判定要求整段文本只含哨兵（允许空白/全角空格/包裹的引号），
  * 免得正常回复里提到这个词被误吞。 */
@@ -35,21 +30,13 @@ export interface InterimChat {
      * next assistant/message (flushed live), else the final at turn/end.
      * M3-D2a: the former instant-mode-only pendingFinal folded in. */
     loopPending: string | null;
-    /** Sent interim messages awaiting turn/end summary (text kept for the recap
-     * t2i card). M3-D2a: booked at send-enqueue time as a placeholder entry;
-     * `id` is backfilled per QQ message id when the send completes and `sentAt`
-     * is stamped then. */
+    /** 本回合发出去的中间消息（只做记账：回合内诊断 / 日志用）。
+     *  2026-11-24 起不再用于撤回和小结卡——中间消息发出去就留在聊天里。 */
     loopBuffer: Array<{
         id: string;
         text: string;
         sentAt: number;
     }>;
-    /** Per-interim 90s (config interimRecallMs) auto-recall timers, keyed by
-     * message id; cleared when turn/end recalls the originals immediately. */
-    recallTimers: Map<string, ReturnType<typeof setTimeout>>;
-    /** Interim message ids already auto-revoked by their 90s timer during a long
-     * turn — skipped by the turn/end immediate recall (already gone from QQ). */
-    recalledInterimIds: Set<string>;
     /** Last assistant message id already handled — duplicate session events
      * (streaming/usage re-emits of the same message) must not re-send it. */
     lastHandledMessageId: string | undefined;
@@ -73,13 +60,8 @@ export type InterimState = 'idle' | 'accumulating' | 'settling';
  * assistant/message branch reads, the log, and the config subset the interim
  * domain actually reads. */
 export interface InterimContext {
-    /** Full outbound pipeline send (interim lines, summary-card text fallback,
-     * deferred finals). */
+    /** Full outbound pipeline send (interim lines, deferred finals). */
     sendToChat(chatId: ChatId, text: string, options?: SendOptions): Promise<string[]>;
-    /** Raw segment send (the summary t2i card). */
-    sendMsg(chatId: ChatId, segments: OutboundSegment[], options: SendOptions): Promise<string | undefined>;
-    /** Raw OneBot action invocation (delete_msg recalls). */
-    call(action: string, params: Record<string, unknown>): Promise<unknown>;
     /** The chat's outbound send-chain tail (settleLoop drains it before
      * snapshotting the interim trail). */
     chainTail(chatId: ChatId): Promise<unknown>;
@@ -89,8 +71,13 @@ export interface InterimContext {
     effectiveInterim(chatId: ChatId): boolean;
     /** Bridge log line callback. */
     log(level: 'info' | 'warn' | 'error' | 'debug', message: string): void;
-    /** The only config fields the interim domain reads. */
-    config: Pick<BridgeConfig, 'interimRecallMs' | 'interimRecall' | 'maxImageBytes' | 'cardFooter' | 'fontFiles' | 'fontFamilies' | 'monoFamilies'>;
+    /** 2026-11-24 主人：「兜底不能你自己想回啥回啥么」——用当前会话模型现写一句
+     *  像聊天的话报进度，代替写死的话术池。缺省 / 抛错 / 超时都回落到话术池。 */
+    generateText?: (prompt: string, options?: {
+        signal?: AbortSignal;
+    }) => Promise<string>;
+    /** 2026-11-24 起中间域不再读任何与撤回/小结卡有关的配置（那套已删）。 */
+    config: Pick<BridgeConfig, never>;
 }
 /**
  * The interim tracker: one per bridge, operating on the per-chat state through
@@ -105,16 +92,32 @@ export declare class InterimTracker {
     /** The (lazy-created) machine record for one chat. */
     private cycle;
     /**
-     * turn/start (B8): prune the previous turn's recalled-id residue. Message
-     * ids are per-send unique, so a pruned id can never be consulted by a later
-     * turn/end recall — those reads only see the current turn's own buf. The
-     * one benign race: a follow-up turn starting while the previous turn's
-     * settleLoop recall is still draining loses the skip entries recorded
-     * before the prune, so an already-revoked id gets one extra delete_msg that
-     * fails and is logged at debug — no user-visible change. Machine: the new
-     * turn normalizes the cycle to idle (it accumulates from scratch).
+     * 静默兜底（方案四）：arm 一个 90 秒的看门狗。回合真的在跑、但模型一个字
+     * 正文都没产出时，到点由插件自己插一句，避免对面完全没动静。
+     * 只有 visible text 会重置它（见 onAssistantMessage 里的 noteVisible）。
      */
-    onTurnStart(chat: InterimChat): void;
+    private armNudge;
+    /** 兜底那一刻真的发一句进度汇报；连催 N 次还静默就停手，等回合自己结束。 */
+    private fireNudge;
+    /**
+     * 请当前会话模型写一句「正在干嘛」的口语汇报。
+     *
+     * 目标是像人随口接一句，不是播报器：不列清单、不说「已收到」、不承诺时间、
+     * 不叫主人（对面可能是任何人）。限时 20 秒；任何异常都返回空串走话术池兜底。
+     */
+    private composeNudge;
+    /** 有可见正文了：重置看门狗（这条消息本身就已经给对面动静了）。
+     *  中间消息关着时压根不挂 —— 跟着开关走（主人 2026-11-24）。 */
+    private noteVisible;
+    /** 回合收尾 / 新回合：撤掉看门狗，别让它下一轮再插一句。 */
+    private clearNudge;
+    /**
+     * turn/start (B8): the new turn accumulates from scratch. Machine: the new
+     * turn normalizes the cycle to idle, and arms the silence watchdog — 但只在
+     * 中间消息开着时挂：主人 2026-11-24 定「这个都跟开关走」，关掉中间消息就
+     * 连兜底也不发，那一轮完全不插话。
+     */
+    onTurnStart(chatId: ChatId, chat: InterimChat): void;
     /** Diagnostic read of one chat's machine state (the state-machine unit
      * tests drive the transition table through this seam). */
     stateOf(chat: InterimChat): InterimState;
@@ -137,38 +140,22 @@ export declare class InterimTracker {
      * and skipping it keeps the two passes from racing. */
     onTurnEnd(chatId: ChatId, chat: InterimChat): void;
     /**
-     * 本地加（2026-11-23）：语音条回合的正文丢弃判定。掷骰命中语音条、并且
-     * 本回合确实发出去了一条语音 —— 那语音里念的就是这句话，正文再发一遍就
-     * 是 QQ 里两条一模一样的内容（主人 2026-11-23 抓到的那次）。
-     * 只发文字没发语音（模型没调 qq_send_voice）时不丢，否则那轮会彻底没声音
-     * 也没字。
+     * 本地加（2026-11-23，2026-11-24 恢复）：语音条回合的正文丢弃判定。掷骰命中
+     * 语音条、并且本回合确实发出去了一条语音 —— 那语音里念的就是这句话，正文再
+     * 发一遍就是 QQ 里两条一模一样的内容。
+     * 只发文字没发语音（模型没调 qq_send_voice）时不丢，否则那轮会彻底没声音也没字。
      */
     private dropVoiceDuplicate;
-    /** Cancel a message's pending 90s auto-recall timer. */
-    private clearInterimTimer;
-    /**
-     * Recall the still-on-screen interim originals (turn/end step 2). Ids the
-     * 90s timer already revoked during the turn are skipped (already gone).
-     * Recall failure is logged only — the summary card still carries the text.
-     */
-    private recallLoopMessages;
-    /** Fire when an interim's own 90s timer elapses mid-turn: revoke it alone. */
-    private revokeInterim;
-    /** Render this turn's interims into one t2i image (summary card, before final). */
-    private sendInterimSummary;
     /** Send one interim live and book it SYNCHRONOUSLY (M3-D2a): a placeholder
      * entry enters the loop buffer at enqueue time; when the send completes it
-     * is backfilled in place with one entry per QQ message id and the
-     * per-message auto-recall timer (config interimRecallMs) is armed, so long
-     * turns clean up their early messages even before the summary arrives. The
-     * send's settled promise joins the cycle's in-flight set — the trail no
-     * longer depends on a push callback racing the turn/end snapshot. */
+     * is backfilled in place with one entry per QQ message id. The send's
+     * settled promise joins the cycle's in-flight set — the trail no longer
+     * depends on a push callback racing the turn/end snapshot. */
     private sendInterim;
     /** Send completion: backfill the placeholder in place with one entry per
      * message id (a placeholder already dropped from the buffer — the inbound
-     * residue reset swapped the array — is never re-added) and arm the per-id
-     * auto-recall timers (skipped when the interimRecall degrade switch is
-     * false): the messages are on screen. */
+     * residue reset swapped the array — is never re-added). 2026-11-24 起不再
+     * 排自动撤回定时器：中间消息就留在聊天里。 */
     private completeInterim;
     /** Send failure: drop the placeholder so the cycle never summarizes or
      * recalls a message that never reached QQ (the pre-rewrite code simply
@@ -178,14 +165,10 @@ export declare class InterimTracker {
      * Settle a finished turn's interim trail (interimMessages on): drain the
      * send chain (cross-send ordering, as before) and the cycle's in-flight
      * set (bookkeeping: enqueue count == completion count — no reliance on
-     * microtask registration order), then render ONE t2i summary card of
-     * all interims, immediately recall the still-on-screen originals, and finally
-     * send the deferred final text. With the interimRecall degrade switch off,
-     * the summary card and the immediate recall are skipped — the turn ends
-     * with the final text only. No merged-forward any more — QQ refuses to
-     * recall messages older than ~2 min, and a forward of aged interims would
-     * leave the originals plus a duplicate card, so interims are surfaced live
-     * and auto-revoked per message (90s) during long turns.
+     * microtask registration order), then send the deferred final text.
+     *
+     * 2026-11-24 主人让去掉「自动撤回中间消息」和「中间消息保留时长」：中间
+     * 消息发出去就留在聊天里，回合末不再发 t2i 小结卡、也不再 delete_msg 撤回。
      */
     private settleLoop;
 }
