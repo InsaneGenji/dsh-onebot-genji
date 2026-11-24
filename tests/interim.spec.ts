@@ -632,10 +632,15 @@ describe('interim tracker', () => {
     // 正文自动切气泡（issue #6）：104 字按句末标点切成 4 条独立消息，条间有
     // 800–1500ms 停顿，所以先等整批发完、再把各条的文本拼回原文做断言。
     // 2026-11-22 起每条气泡末尾的「。」会被剥掉（主人要求聊天里不挂句号）；
-    // 这段文本正好一句一气泡，于是拼接结果里所有「。」都没了。
-    const expected = text.replace(/。/gu, '')
+    // 2026-11-24 起普通正文上限 3 条，这里 4 句会把第 3、4 句 join(' ') 成一条，
+    // 中间那个「。」就留在气泡内部了（只剥末尾）。断言：字全在、顺序对、没重复，
+    // 并且最后一条结尾确实没有「」。
+    const flatten = (s: string): string => s.replace(/\s+/gu, '')
+    const expected = flatten(text).replace(/。/gu, '')
     await vi.waitFor(() => {
-      expect(outbound.filter(f => f.action === 'send_msg').map(textOf).join('')).toBe(expected)
+      const joined = outbound.filter(f => f.action === 'send_msg').map(textOf).join('')
+      expect(flatten(joined).replace(/。/gu, '')).toBe(expected)
+      expect(joined.trimEnd().endsWith('。')).toBe(false)
     }, { timeout: 10_000 })
     const liveFrames = outbound.filter(f => f.action === 'send_msg')
     expect(liveFrames.length).toBeGreaterThan(1)
@@ -648,8 +653,10 @@ describe('interim tracker', () => {
 
     // Summary body: the full text appears exactly once, numbering stays
     // contiguous (no orphan "2." line from the empty-text sibling entry).
+    // 2026-11-24：卡片是一整条，只有末尾的「。」被剥，句中的「。」留在里面，
+    // 所以这里跟 flatten 后的原文比（忽略空白和句号）。
     const summary = outbound.slice(at).filter(f => f.action === 'send_msg').map(textOf).join('')
-    expect(summary).toBe('1. ' + expected)
+    expect(flatten(summary).replace(/。/gu, '')).toBe(flatten('1. ' + expected))
     // Recall intact: every bubble of the interim is revoked.
     const liveIds = echoed.filter(e => e.action === 'send_msg').slice(0, liveFrames.length).map(e => e.id)
     expect(outbound.filter(f => f.action === 'delete_msg').map(f => (f.params as { message_id: string }).message_id).sort())

@@ -15,8 +15,8 @@ import type { ChatId } from './chat.js'
  * bridge log (render failures are debug lines, relay failures warn lines).
  * T2-B2 adds the optional onQuestionCall hook for the answer-bridge state. */
 export interface CardRelayContext {
-  /** Outbound pipeline send (bridge facade). */
-  sendToChat(chatId: ChatId, text: string): Promise<string[]>
+  /** Outbound pipeline send (bridge facade). `noBubbleSplit` 让卡片原样一条发出去。 */
+  sendToChat(chatId: ChatId, text: string, options?: { noBubbleSplit?: boolean }): Promise<string[]>
   /** Bridge log line callback. */
   log(level: 'info' | 'warn' | 'error' | 'debug', message: string): void
   /** T2-B2: called once per relayed ask_user_question call with the parsed batch. */
@@ -51,9 +51,10 @@ export function relayHostCards(ctx: CardRelayContext, chatId: ChatId, content: r
     const call = block as { type?: string; name?: string; id?: string; arguments?: string }
     if (call.type !== 'tool-call') continue
     if (call.name === 'exit_plan_mode') {
-      const text = renderPlanCard(call.arguments, ctx.log)
-      if (text !== undefined) {
-        ctx.sendToChat(chatId, text).catch((error: unknown) => {
+      const planText = renderPlanCard(call.arguments, ctx.log)
+      if (planText !== undefined) {
+        // 计划书同样按行排版，整张一条发。
+        ctx.sendToChat(chatId, planText, { noBubbleSplit: true }).catch((error: unknown) => {
           ctx.log('warn', 'plan card relay failed: ' + String(error))
         })
       }
@@ -67,7 +68,8 @@ export function relayHostCards(ctx: CardRelayContext, chatId: ChatId, content: r
           ctx.log('debug', 'question state update failed: ' + String(error))
         }
       }
-      ctx.sendToChat(chatId, renderQuestionCard(parsed)).catch((error: unknown) => {
+      // 提问卡整张一条发（卡是按行排版的，切开会把选项和标题拆散）。
+      ctx.sendToChat(chatId, renderQuestionCard(parsed), { noBubbleSplit: true }).catch((error: unknown) => {
         ctx.log('warn', 'question card relay failed: ' + String(error))
       })
     }

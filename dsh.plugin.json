@@ -1,6 +1,6 @@
 {
   "id": "dsh-onebot",
-  "version": "0.17.1",
+  "version": "0.17.2",
   "main": "./lib/index.js",
   "description": "InsaneGenji 维护的 QQ 通道分叉（上游 dsh-onebot-qq@0.11.0）：OneBot 11 / NapCat，DM+群聊、图片语音、表情包库、主动搭话、QQ 空间说说、回合形式掷骰、正文气泡切分。仓库 github.com/InsaneGenji/dsh-onebot-genji",
   "engines": { "dsh": ">=0.1.5-rc.1 <0.1.6-0 || >=0.1.6-alpha.1 <0.1.7-0 || >=0.1.7-alpha.1 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0 || >=0.2.1-0 <0.3.0-0 || >=0.2.2-0 <0.2.3-0" },

@@ -1,65 +1,76 @@
-// 气泡切分：编号列表与 `~` 的边界（2026-11-20 主人两次抓到的误切）
-//  ① `420~2200ms` 这种范围被当成句末 → 一条被劈成两条
-//  ② `~/.dsh/memory-daily/` 家目录路径被劈开
-//  ③ 一段里挤着「…。2. 自省复盘…3. 记忆图衰减…」时，2、3 点没被分出来
+// 气泡切分（2026-11-24 主人口述的最终规则）：
+//   1. 换行则分条
+//   2. 遇到标点（。！？…）则分条
+//   3. 列表项（1. 2、 3) / - • *）一行一条
+//   4. 去掉每条末尾的「。」
+//   5. 相邻气泡按上一条字数停顿 420~2200ms（bubbleGapMs，单独测）
+// 旧的「35 字以内不切」「不足 6 字碎片吸附」「条数上限 3/4/8」全部取消。
 import { describe, expect, it } from 'vitest'
 import { splitIntoBubbles } from '../src/outbound.js'
 
-describe('气泡切分：~ 不是句末', () => {
-  it('范围 420~2200ms 不切', () => {
-    const text = '380ms 打底 + 每字 68ms，再叠 ±15% 抖动，夹在 420~2200ms 之间——「嗯」大概半秒就接上，长句慢慢等一秒多'
+describe('换行即分条', () => {
+  it('两行就是两条，哪怕很短', () => {
+    expect(splitIntoBubbles('嗯\n好')).toEqual(['嗯', '好'])
+  })
+
+  it('空行不产出空气泡', () => {
+    expect(splitIntoBubbles('嗯\n\n\n好\n')).toEqual(['嗯', '好'])
+  })
+
+  it('没有标点、没有换行的长句也不硬切', () => {
+    const text = '这一整句从头到尾没有任何标点所以它必须在同一条气泡里完整地发出去不许被拆开'
     expect(splitIntoBubbles(text)).toEqual([text])
-  })
-
-  it('家目录路径 ~/.dsh/... 不切', () => {
-    const text = '1. 会话快照：把当天所有渠道的聊天从会话日志里抽出来，覆盖写入 ~/.dsh/memory-daily/YYYY-MM-DD-raw.md。'
-    const out = splitIntoBubbles(text)
-    expect(out).toHaveLength(1)
-    expect(out[0]).toContain('~/.dsh/memory-daily/YYYY-MM-DD-raw.md')
-  })
-
-  it('句末的 ~ 仍然切（超长行里「知道了~」后面接正文）', () => {
-    const out = splitIntoBubbles('我知道啦~那就按这个来，晚点回你结果，别催我啦，反正我一个人干这些活也不容易')
-    expect(out.length).toBeGreaterThan(1)
-    expect(out[0]).toBe('我知道啦~')
   })
 })
 
-describe('气泡切分：编号列表', () => {
-  it('列表项各自成条，不被并成一条', () => {
-    const text = [
-      '1. 会话快照：每 300 秒把当天聊天抽成 raw 文件存储备查',
-      '2. 自省复盘：每天 04:30 回看 SELF.md 里的旧判断，标还认不认',
-      '3. 记忆图衰减：每天 04:30 抽关系，没人提的边每天掉一半',
-    ].join('\n')
+describe('句末标点即分条', () => {
+  it('一句一标点，4 句出 4 条（不再有 35 字门槛，也不再有 3 条上限）', () => {
+    const text = '第一句。第二句！第三句？第四句…'
+    expect(splitIntoBubbles(text)).toEqual(['第一句', '第二句！', '第三句？', '第四句…'])
+  })
+
+  it('行内多个感叹号也切', () => {
+    expect(splitIntoBubbles('真的！假的？')).toEqual(['真的！', '假的？'])
+  })
+
+  it('逗号、顿号、冒号、分号不是句末，不切', () => {
+    const text = '先是这个，然后是那个、还有别的：总之没完；还没说完呢'
+    expect(splitIntoBubbles(text)).toEqual([text])
+  })
+
+  it('单独一个标点不产气泡，并到上一条', () => {
+    expect(splitIntoBubbles('真的假的\n！')).toEqual(['真的假的！'])
+  })
+
+  it('`~` 不再当句末（范围与家目录路径都不切）', () => {
+    const text = '夹在 420~2200ms 之间，路径是 ~/.dsh/memory-daily/x.md 这样'
+    expect(splitIntoBubbles(text)).toEqual([text])
+  })
+})
+
+describe('列表项一行一条', () => {
+  it('编号列表各自成条', () => {
+    const text = ['1. 会话快照：每 300 秒抽一次', '2. 自省复盘：回看旧判断', '3. 记忆图衰减：没人提就掉'].join('\n')
     const out = splitIntoBubbles(text)
     expect(out).toHaveLength(3)
     expect(out[0].startsWith('1.')).toBe(true)
-    expect(out[1].startsWith('2.')).toBe(true)
     expect(out[2].startsWith('3.')).toBe(true)
   })
 
   it('编号挤在同一段里也能切开', () => {
-    const text = '因为上下文被压缩后我只剩摘要，这份 raw 才是真正的原话备份。2. 自省复盘：每天回看旧判断。3. 记忆图衰减：没人提的关系每天掉一半。'
+    const text = '因为上下文被压缩后我只剩摘要。2. 自省复盘：每天回看旧判断。3. 记忆图衰减：没人提的关系每天掉一半。'
     const out = splitIntoBubbles(text)
     expect(out.length).toBe(3)
     expect(out[1].startsWith('2.')).toBe(true)
     expect(out[2].startsWith('3.')).toBe(true)
   })
 
-  it('列表时上限放宽到 8 条，多出来的不被合并', () => {
-    const lines = Array.from({ length: 6 }, (_, i) => `${i + 1}. 第${i + 1}条：一些足够长的说明文字，保证不会被短句合并规则吸走`)
-    expect(splitIntoBubbles(lines.join('\n'))).toHaveLength(6)
+  it('「- 」「• 」「* 」开头也算列表项', () => {
+    const text = ['开头', '- 第一条足够长的说明文字', '• 第二条足够长的说明文字', '* 第三条足够长的说明文字'].join('\n')
+    expect(splitIntoBubbles(text)).toHaveLength(4)
   })
 
-  it('非列表的长文本仍然最多 4 条', () => {
-    const lines = Array.from({ length: 6 }, () => '这是一句普通的正文，没有编号，单纯用来撑满气泡数量看看上限')
-    expect(splitIntoBubbles(lines.join('\n')).length).toBeLessThanOrEqual(4)
-  })
-})
-
-describe('列表里说明行多于编号项（2026-11-23 主人抓到的挤压 bug）', () => {
-  it('两句说明 + 4 个编号 + 一句收尾 = 7 行，必须出 7 条', () => {
+  it('带列表项的整段不封顶，7 行就出 7 条', () => {
     const text = [
       '判据已经写进两个地方了',
       'src/prompt.ts 起原来只有一行，现在拆成四条：',
@@ -69,21 +80,17 @@ describe('列表里说明行多于编号项（2026-11-23 主人抓到的挤压 b
       '4. 判据一句话：要等才算长活',
       '两处都只改文字，没加代码闸',
     ].join('\n')
-    const out = splitIntoBubbles(text)
-    expect(out).toHaveLength(7)
-    expect(out[2].startsWith('1.')).toBe(true)
-    expect(out[5].startsWith('4.')).toBe(true)
-    // 收尾句不许被 join 到第 4 条后面
-    expect(out[6]).not.toContain('4.')
+    expect(splitIntoBubbles(text)).toHaveLength(7)
   })
 
-  it('带编号时**不封顶**，10 条就出 11 条（2026-11-23 晚主人第二次要求）', () => {
-    const text = [
-      '开头一句说明',
-      ...Array.from({ length: 10 }, (_, i) => `${i + 1}. 第${i + 1}条：一些足够长的说明文字，保证不会被短句合并规则吸走`),
-    ].join('\n')
-    const out = splitIntoBubbles(text)
-    expect(out).toHaveLength(11)
-    expect(out[10].startsWith('10.')).toBe(true)
+  it('10 个编号就出 10 条（不封顶）', () => {
+    const lines = Array.from({ length: 10 }, (_, i) => `${i + 1}. 第${i + 1}条：一些足够长的说明文字`)
+    expect(splitIntoBubbles(lines.join('\n'))).toHaveLength(10)
+  })
+})
+
+describe('句末句号剥掉', () => {
+  it('每条末尾的「。」都去掉，问号叹号不动', () => {
+    expect(splitIntoBubbles('好的，我知道了。\n真的吗？\n太棒了！')).toEqual(['好的，我知道了', '真的吗？', '太棒了！'])
   })
 })

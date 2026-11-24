@@ -82,7 +82,7 @@ export declare function splitAtSegments(text: string): OutboundSegment[];
  * 整条只有标点的不处理（免得把「。」自己清成空串）。
  */
 export declare function stripTrailingPeriod(text: string): string;
-export declare function splitIntoBubbles(text: string, maxBubbles?: number, sentenceCut?: number): string[];
+export declare function splitIntoBubbles(text: string): string[];
 /** 气泡停顿：按字数算的基准参数（2026-11-20 主人要求「按每条字数来，别固定 1500ms」）。 */
 export declare const BUBBLE_GAP_BASE_MS = 380;
 export declare const BUBBLE_GAP_PER_CHAR_MS = 68;
@@ -98,6 +98,9 @@ export declare function bubbleGapMs(prevText?: string, random?: () => number): n
 /** Options for an explicit outbound send (from tools). */
 export interface SendOptions {
     replyTo?: string;
+    /** 2026-11-24：整段原样发一条，不切气泡。给结构化卡片（提问卡/计划书）用——
+     * 它们靠换行排版，切开会把「a) 选项」和标题拆散。 */
+    noBubbleSplit?: boolean;
     /** Queue the send for resend on reconnect instead of failing while the
      * connection is down. Only for model final replies; interim sends carry
      * recall timers + bookkeeping and must never be replayed. */

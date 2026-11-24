@@ -14,8 +14,10 @@ import type { ChatId } from './chat.js';
  * bridge log (render failures are debug lines, relay failures warn lines).
  * T2-B2 adds the optional onQuestionCall hook for the answer-bridge state. */
 export interface CardRelayContext {
-    /** Outbound pipeline send (bridge facade). */
-    sendToChat(chatId: ChatId, text: string): Promise<string[]>;
+    /** Outbound pipeline send (bridge facade). `noBubbleSplit` 让卡片原样一条发出去。 */
+    sendToChat(chatId: ChatId, text: string, options?: {
+        noBubbleSplit?: boolean;
+    }): Promise<string[]>;
     /** Bridge log line callback. */
     log(level: 'info' | 'warn' | 'error' | 'debug', message: string): void;
     /** T2-B2: called once per relayed ask_user_question call with the parsed batch. */

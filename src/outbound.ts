@@ -236,73 +236,38 @@ export function stripTrailingPeriod(text: string): string {
   return body.replace(/。\s*$/u, '')
 }
 
-export function splitIntoBubbles(text: string, maxBubbles = 4, sentenceCut = 35): string[] {
+// 2026-11-24 主人口述的最终规则：
+//   1. 换行则分条
+//   2. 遇到**句末**的标点（。！？… / ...）则分条（逗号顿号冒号分号都不切）
+//   3. 遇到列表项（「1. 」「2、」「3) 」或「- 」「• 」「* 」开头）则分条
+//   4. 去掉每条末尾的「。」
+//   5. 相邻气泡之间按上一条的字数停顿 420~2200ms（见 bubbleGapMs）
+// 原来那套「35 字以内不切」「不足 6 字的碎片吸附」「条数上限」全部取消：
+// 上限一取消，就不再出现 join(' ') 把好几行拼成一坨的情况。
+export function splitIntoBubbles(text: string): string[] {
   const raw = String(text ?? '')
   if (raw.trim() === '') return []
   const punctOnlyRe = /^[\p{P}\p{S}\s]+$/u
-  // 1. 换行初切
-  const rawParts = raw.split(/\r?\n+/).map((s) => s.trim()).filter(Boolean)
-  // 2026-11-20：编号列表（「1. …」「2、…」）本身就是一条一条的，**一行一条**，
-  // 行内不再按句号拆，也不许被末尾的 4 条上限合并掉——主人抓到过「2、3 点被并
-  // 成一条」。列表时把上限抬到列表项数量（封顶 8）。
-  const itemRe = /^\s*\d+\s*[.、)．]/
-  // 编号可能独占一行，也可能挤在一段里（「…。2. 自省复盘…3. 记忆图衰减…」），
-  // 两种都算列表，上限按编号个数放宽。
-  const inlineItemRe = /(?:^|\s)\d{1,2}\s*[.、)．]\s/g
-  const listCount = Math.max(
-    rawParts.filter((s) => itemRe.test(s)).length,
-    (raw.match(inlineItemRe) ?? []).length,
-  )
-  const merged: string[] = []
-  const shortMerge = (last: string, s: string): boolean =>
-    punctOnlyRe.test(s)
-    || ([...last].length < 6 && [...last].length + [...s].length <= 24)
-  for (const part of rawParts) {
-    const isItem = listCount >= 2 && itemRe.test(part)
-    // 2. 行内断句（列表项整行成一条）
-    const pieces = isItem || [...part].length <= sentenceCut
-      ? [part]
-      : (() => {
-        // `~` 只在后面不是「路径/数字/英文」时才算句末：
-        //  - `420~2200` 是范围（2026-11-20 主人抓过一次）
-        //  - `~/.dsh/memory-daily/` 是家目录路径（2026-11-20 第二次抓到，
-        //    正文被从路径中间切成两条气泡），后面跟 / \ . _ - 或字母数字都不算句末。
-        // 行内还可能挤着「…。2. 自省复盘…3. 记忆图衰减…」这种编号（主人抓到过
-        // 「2、3 点没分条」），编号标记前也切一刀：`\s\d{1,2}[.、)．]\s`。
-        const segs = part.split(/(?<=[。！？!?…])\s*|(?<=~)\s*(?![0-9A-Za-z/\\._-])|(?<=\s)(?=\d{1,2}\s*[.、)．]\s)/)
-          .map((s) => s.trim()).filter(Boolean)
-        return segs.length > 0 ? segs : [part]
-      })()
-    // 3. 行内吸附合并（换行是硬边界，不跨行合并普通句子）
-    const line: string[] = []
-    for (const s of pieces) {
-      const lastInLine = line[line.length - 1]
-      if (lastInLine !== undefined && shortMerge(lastInLine, s)) {
-        line[line.length - 1] = lastInLine + s
+  const out: string[] = []
+  // 1. 换行是硬边界
+  for (const line of raw.split(/\r?\n+/).map((s) => s.trim()).filter(Boolean)) {
+    // 2/3. 行内按**句末**标点切一刀（。！？!?… 以及英文省略号 ... 或 …）；
+    // 逗号、顿号、冒号、分号不算句末，不切。行内挤着编号（「…。2. 自省复盘…
+    // 3. 记忆图衰减…」）时编号标记前也切一刀。
+    const segs = line
+      .split(/(?<=[。！？!?…])\s*|(?<=\.{2,})\s*|(?<=\s)(?=\d{1,2}\s*[.、)．]\s)/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    for (const seg of segs.length > 0 ? segs : [line]) {
+      // 纯标点段（单独一个「！」）并到上一条，免得发出空气泡
+      if (out.length > 0 && punctOnlyRe.test(seg)) {
+        out[out.length - 1] += seg
       } else {
-        line.push(s)
+        out.push(seg)
       }
     }
-    // 4. 跨行只吸附纯标点行（「真的假的」+「！」）
-    if (line.length > 0 && merged.length > 0 && punctOnlyRe.test(line[0])) {
-      merged[merged.length - 1] += line.shift() as string
-    }
-    merged.push(...line)
   }
-  if (merged.length === 0) return []
-  // 4. 上限控制
-  // 2026-11-23 主人抓到的 bug：「两句说明 + 1~4 四个编号 + 一句收尾」一共 7 行，
-  // 却只按 listCount=4 放宽到 4 条 —— 超出的 2、3、4 和收尾被 join(' ') 拼成
-  // 一条。列表演示里说明行常常比编号项多，所以把实际行数（merged.length）
-  // 也纳入判据。
-  // 2026-11-23 晚 主人第二次要求：**编号列表不封顶**（之前封 8，我写 10 条
-  // 对比项被压成 8 条，他又看到「没分条」）。带编号的列表一律一行一条，
-  // 有几行出几条；不带编号的普通聊天照旧只有 maxBubbles（避免一句话刷屏）。
-  const limit = listCount >= 2 ? merged.length : maxBubbles
-  const out = merged.length > limit
-    ? [...merged.slice(0, limit - 1), merged.slice(limit - 1).join(' ')]
-    : merged
-  // 2026-11-22 主人要求：每条气泡末尾的「。」剥掉（问号叹号不动）；剥成空的丢掉。
+  // 4. 每条末尾的「。」剥掉（问号叹号不动）；剥成空的丢掉。
   return out.map(stripTrailingPeriod).filter((s) => s.trim() !== '')
 }
 
@@ -330,6 +295,9 @@ export function bubbleGapMs(prevText = '', random: () => number = Math.random): 
 /** Options for an explicit outbound send (from tools). */
 export interface SendOptions {
   replyTo?: string
+  /** 2026-11-24：整段原样发一条，不切气泡。给结构化卡片（提问卡/计划书）用——
+   * 它们靠换行排版，切开会把「a) 选项」和标题拆散。 */
+  noBubbleSplit?: boolean
   /** Queue the send for resend on reconnect instead of failing while the
    * connection is down. Only for model final replies; interim sends carry
    * recall timers + bookkeeping and must never be replayed. */
@@ -646,7 +614,7 @@ export class OutboundPipeline {
           // 气泡切分（2026-11-19 按 issue #6）：换行/长句 → 多条独立气泡，
           // 最多 4 条。首条立即发，其后按 800–1500ms 随机停顿营造打字呼吸感；
           // 引用只挂在第一条。
-          const bubbles = splitIntoBubbles(plain)
+          const bubbles = options.noBubbleSplit === true ? [plain] : splitIntoBubbles(plain)
           for (let i = 0; i < bubbles.length; i += 1) {
             if (i > 0) await new Promise((resolve) => setTimeout(resolve, bubbleGapMs(bubbles[i - 1])))
             // T2 (PR port): 出站防御第三闸——正文里的 [[at:QQ]] 换成真 at 段
